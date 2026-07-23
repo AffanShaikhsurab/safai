@@ -1,0 +1,1728 @@
+﻿@import "tailwindcss";
+/* Display (Space Grotesk) + UI (Sora) — Nebula / Void. */
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+/* Class-based dark mode: `dark:` utilities key off a `.dark` class on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ===========================================================================
+   Design tokens — Nebula (default) / Void (.theme-void).
+   sky = safe/CTAs; progress = deeper sky blue on Nebula.
+   =========================================================================== */
+:root {
+  color-scheme: dark;
+
+  --progress: #5b8fd4;
+  --progress-2: #2f5fad;
+  --progress-glow: rgba(91, 143, 212, 0.4);
+  /* Kept as --mint* for class compat; values are sky blue (not teal). */
+  --mint: #9ec5ff;
+  --mint-strong: #6ea8ff;
+  --mint-glow: rgba(110, 168, 255, 0.35);
+  --amber: #fbbf24;
+  --rose: #fb7185;
+
+  /* Night King glass surfaces */
+  --card: rgba(14, 22, 48, 0.42);
+  --card2: rgba(20, 32, 64, 0.55);
+  --border: rgba(160, 190, 255, 0.12);
+  --border-strong: rgba(160, 190, 255, 0.22);
+  --muted: rgba(220, 230, 255, 0.58);
+  --dim: rgba(180, 200, 255, 0.4);
+  --track: rgba(255, 255, 255, 0.1);
+  --rail: rgba(4, 8, 20, 0.35);
+  --glow-text: 0 0 28px rgba(255, 255, 255, 0.2), 0 0 60px rgba(91, 143, 212, 0.2);
+  --glow-mint: 0 0 20px rgba(110, 168, 255, 0.28), 0 0 48px rgba(158, 197, 255, 0.12);
+  --glass-blur: 18px;
+
+  --font-ui: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-display: "Space Grotesk", "Sora", ui-sans-serif, system-ui, sans-serif;
+
+  --radius: 18px;
+}
+
+/* Void — charcoal dark, Cursor-like hairline dividers, quiet sky. */
+.theme-void {
+  --progress: #8a8a8a;
+  --progress-2: #5c5c5c;
+  --progress-glow: transparent;
+  --mint-glow: transparent;
+  --card: #0e0e0e;
+  --card2: #141414;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --muted: rgba(255, 255, 255, 0.5);
+  --dim: rgba(255, 255, 255, 0.34);
+  --track: rgba(255, 255, 255, 0.07);
+  --rail: #0a0a0a;
+  --glow-text: none;
+  --glow-mint: none;
+  --glass-blur: 0px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden; /* app owns its own scroll regions */
+  background: #03050c;
+}
+
+html.theme-void body {
+  background: #0a0a0a;
+}
+
+#root {
+  min-height: 100%;
+  height: 100vh;
+}
+
+:focus-visible {
+  outline: 1px solid var(--mint-strong);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Sky: Nebula = deep night + stars + comets.
+   Void = charcoal + sparse dim stars + dimmer comets.
+   --------------------------------------------------------------------------- */
+.space-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 70% 50% at 12% 70%, rgba(28, 55, 140, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 40% at 88% 18%, rgba(45, 75, 160, 0.1) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 70% at 50% 120%, rgba(12, 24, 70, 0.4) 0%, transparent 50%),
+    radial-gradient(circle at 50% 35%, #070b18 0%, #03050c 72%);
+}
+
+.theme-void .space-bg {
+  background: #0a0a0a;
+}
+
+/* Dense, quiet starfield â€” mostly dim, a few brighter pinpoints. */
+.space-bg .stars {
+  position: absolute;
+  inset: -15%;
+  background-repeat: repeat;
+}
+.space-bg .stars-far {
+  opacity: 0.55;
+  background-image:
+    radial-gradient(1px 1px at 8% 12%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1px 1px at 16% 48%, rgba(255, 255, 255, 0.28), transparent),
+    radial-gradient(1px 1px at 22% 78%, rgba(200, 215, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 31% 22%, rgba(255, 255, 255, 0.22), transparent),
+    radial-gradient(1.2px 1.2px at 38% 61%, rgba(220, 230, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 45% 9%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 52% 41%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(1px 1px at 58% 88%, rgba(200, 215, 255, 0.38), transparent),
+    radial-gradient(1px 1px at 67% 33%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1.2px 1.2px at 74% 69%, rgba(220, 230, 255, 0.45), transparent),
+    radial-gradient(1px 1px at 81% 15%, rgba(255, 255, 255, 0.25), transparent),
+    radial-gradient(1px 1px at 88% 54%, rgba(255, 255, 255, 0.32), transparent),
+    radial-gradient(1px 1px at 94% 81%, rgba(200, 215, 255, 0.28), transparent),
+    radial-gradient(1px 1px at 4% 91%, rgba(255, 255, 255, 0.2), transparent);
+  background-size: 380px 380px;
+  animation: stars-drift 160s linear infinite;
+}
+.space-bg .stars-near {
+  opacity: 0.7;
+  background-image:
+    radial-gradient(1.4px 1.4px at 14% 28%, rgba(255, 255, 255, 0.75), transparent),
+    radial-gradient(1px 1px at 29% 64%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1.6px 1.6px at 48% 18%, rgba(200, 220, 255, 0.85), transparent),
+    radial-gradient(1px 1px at 63% 72%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1.3px 1.3px at 77% 36%, rgba(255, 255, 255, 0.65), transparent),
+    radial-gradient(1px 1px at 91% 58%, rgba(220, 230, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 35% 92%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1.2px 1.2px at 55% 46%, rgba(255, 255, 255, 0.5), transparent);
+  background-size: 520px 520px;
+  animation: stars-twinkle 8s ease-in-out infinite alternate;
+}
+
+/* Subtle falling comets â€” thin trails, staggered, never flashy. */
+.space-bg .comet {
+  position: absolute;
+  width: 1.5px;
+  height: 72px;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(220, 235, 255, 0.55) 0%,
+    rgba(160, 190, 255, 0.18) 45%,
+    transparent 100%
+  );
+  box-shadow: 0 0 6px 1px rgba(140, 175, 255, 0.15);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.space-bg .comet::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+  transform: translateX(-50%);
+  box-shadow: 0 0 6px 1px rgba(200, 220, 255, 0.35);
+}
+
+.space-bg .comet-a {
+  top: -10%;
+  left: 18%;
+  transform: rotate(18deg);
+  animation: comet-fall-a 11s linear infinite;
+}
+.space-bg .comet-b {
+  top: -12%;
+  left: 58%;
+  height: 56px;
+  transform: rotate(22deg);
+  animation: comet-fall-b 17s linear infinite;
+  animation-delay: 4s;
+}
+.space-bg .comet-c {
+  top: -8%;
+  left: 78%;
+  height: 48px;
+  width: 1px;
+  transform: rotate(14deg);
+  animation: comet-fall-c 22s linear infinite;
+  animation-delay: 9s;
+}
+
+.theme-void .space-bg .stars-far {
+  opacity: 0.18;
+  animation: none;
+}
+.theme-void .space-bg .stars-near {
+  opacity: 0.12;
+  animation: none;
+}
+.theme-void .space-bg .comet {
+  width: 1px;
+  height: 56px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(255, 255, 255, 0.08) 40%,
+    transparent 100%
+  );
+  box-shadow: none;
+  filter: brightness(0.7);
+}
+.theme-void .space-bg .comet::before {
+  width: 2px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: none;
+}
+.theme-void .space-bg .comet-a {
+  animation-duration: 16s;
+}
+.theme-void .space-bg .comet-b {
+  animation-duration: 24s;
+  animation-delay: 6s;
+}
+.theme-void .space-bg .comet-c {
+  animation-duration: 28s;
+  animation-delay: 12s;
+}
+
+@keyframes stars-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-28px, 14px, 0);
+  }
+}
+@keyframes stars-twinkle {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 0.75;
+  }
+}
+@keyframes comet-fall-a {
+  0%,
+  12% {
+    opacity: 0;
+    transform: rotate(18deg) translate3d(0, 0, 0);
+  }
+  16% {
+    opacity: 0.55;
+  }
+  38% {
+    opacity: 0.35;
+    transform: rotate(18deg) translate3d(42vw, 78vh, 0);
+  }
+  42%,
+  100% {
+    opacity: 0;
+    transform: rotate(18deg) translate3d(48vw, 90vh, 0);
+  }
+}
+@keyframes comet-fall-b {
+  0%,
+  20% {
+    opacity: 0;
+    transform: rotate(22deg) translate3d(0, 0, 0);
+  }
+  24% {
+    opacity: 0.4;
+  }
+  48% {
+    opacity: 0.25;
+    transform: rotate(22deg) translate3d(28vw, 72vh, 0);
+  }
+  52%,
+  100% {
+    opacity: 0;
+    transform: rotate(22deg) translate3d(32vw, 88vh, 0);
+  }
+}
+@keyframes comet-fall-c {
+  0%,
+  35% {
+    opacity: 0;
+    transform: rotate(14deg) translate3d(0, 0, 0);
+  }
+  38% {
+    opacity: 0.35;
+  }
+  58% {
+    opacity: 0.2;
+    transform: rotate(14deg) translate3d(18vw, 65vh, 0);
+  }
+  62%,
+  100% {
+    opacity: 0;
+    transform: rotate(14deg) translate3d(22vw, 80vh, 0);
+  }
+}
+
+/* App content sits above the background. */
+.sky-content {
+  position: relative;
+  z-index: 10;
+}
+
+/* ---------------------------------------------------------------------------
+   Surfaces â€” Nebula glass; Cursor solid panels
+   --------------------------------------------------------------------------- */
+.card,
+.glass {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 8px 32px rgba(0, 0, 0, 0.18);
+}
+.theme-void .card,
+.theme-void .glass {
+  box-shadow: none;
+  border-color: var(--border);
+}
+/* Void shell — Cursor-style hairline panel seams */
+.theme-void .rail {
+  border-right: 1px solid var(--border);
+  background: #0a0a0a;
+}
+.theme-void .topbar {
+  border-bottom: 1px solid var(--border);
+}
+.theme-void .rail .foot .ver {
+  border-top-color: var(--border);
+}
+.card-interactive:hover {
+  border-color: var(--border-strong);
+  background: var(--card2);
+}
+
+/* ---------------------------------------------------------------------------
+   Buttons
+   --------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 13px 30px;
+  font-size: 14px;
+  white-space: nowrap;
+  transition: filter 0.15s ease, transform 0.15s ease, background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--mint);
+  color: #0a0a0a;
+}
+.btn-primary:not(:disabled):hover {
+  filter: brightness(1.05);
+}
+.btn-ghost {
+  background: transparent;
+  color: #fff;
+  border: 1px solid var(--border);
+}
+.btn-ghost:not(:disabled):hover {
+  background: var(--card2);
+  border-color: var(--border-strong);
+}
+.btn-danger {
+  background: rgba(251, 113, 133, 0.16);
+  color: #fecdd3;
+  border: 1px solid rgba(251, 113, 133, 0.4);
+}
+.btn-danger:not(:disabled):hover {
+  background: rgba(251, 113, 133, 0.24);
+}
+
+/* ---------------------------------------------------------------------------
+   Pills / chips (used by TierBadge + tool chips)
+   --------------------------------------------------------------------------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  padding: 0.28rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  color: rgba(255, 255, 255, 0.8);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mint-strong);
+}
+
+/* ---------------------------------------------------------------------------
+   Toggle switch (mint when on)
+   --------------------------------------------------------------------------- */
+.switch {
+  width: 50px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--track);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.switch[data-on="true"] {
+  background: var(--mint);
+  border-color: transparent;
+}
+.switch[data-on="true"]::after {
+  transform: translateX(22px);
+  background: #0a0a0a;
+}
+.switch[data-mixed="true"]::after {
+  transform: translateX(11px);
+}
+.sr-check {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Segmented control (mint = active)
+   --------------------------------------------------------------------------- */
+.segmented {
+  display: inline-flex;
+  gap: 4px;
+}
+.segmented > button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 9px 13px;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.segmented > button:hover {
+  color: #fff;
+}
+.segmented > button[data-on="true"] {
+  background: var(--mint);
+  color: #0a0a0a;
+}
+
+/* ---------------------------------------------------------------------------
+   Checkbox (mint tick) for item rows
+   --------------------------------------------------------------------------- */
+.check {
+  position: relative;
+  width: 21px;
+  height: 21px;
+  border-radius: 7px;
+  border: 1.5px solid var(--border);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+  color: transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.check[data-on="true"] {
+  background: var(--mint);
+  border-color: transparent;
+  color: #0a0a0a;
+}
+.check svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---------------------------------------------------------------------------
+   Round action buttons flanking the dial
+   --------------------------------------------------------------------------- */
+.round-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: 72px;
+}
+.round-wrap .cap {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.round {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.round:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.round:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.round.mint {
+  border-color: rgba(110, 168, 255, 0.45);
+}
+.round.mint:not(:disabled) {
+  animation: mint-pulse 2.4s ease-in-out infinite;
+}
+.round svg {
+  width: 23px;
+  height: 23px;
+  color: var(--mint-strong);
+}
+
+/* ---------------------------------------------------------------------------
+   The dial
+   --------------------------------------------------------------------------- */
+.dial {
+  position: relative;
+  width: 360px;
+  height: 360px;
+  flex: none;
+  filter: drop-shadow(0 0 18px var(--progress-glow));
+}
+.dial svg {
+  width: 100%;
+  height: 100%;
+}
+.dial-track {
+  fill: none;
+  stroke: var(--track);
+  stroke-width: 18;
+  stroke-linecap: round;
+}
+.dial-value {
+  fill: none;
+  stroke: url(#dialGrad);
+  stroke-width: 18;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.4s ease;
+}
+.dial-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 26px;
+  animation: dial-settle 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dial-big {
+  font-family: var(--font-display);
+  font-size: 74px;
+  font-weight: 500;
+  letter-spacing: -3px;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--glow-text);
+}
+.dial-big span {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin-left: 5px;
+}
+.dial-cap {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: #fff;
+  margin-top: 8px;
+}
+.dial-sub {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 9px;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------------------
+   Small shared type helpers
+   --------------------------------------------------------------------------- */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.label {
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+/* Compatibility shims for soft neon on Nebula (off under Cursor). */
+.neon-soft {
+  text-shadow: var(--glow-mint);
+}
+
+/* ---------------------------------------------------------------------------
+   Progress / usage bars
+   --------------------------------------------------------------------------- */
+.bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+.bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--progress), var(--progress-2));
+  box-shadow: 0 0 12px var(--progress-glow);
+  transition: width 0.5s ease;
+}
+
+/* ---------------------------------------------------------------------------
+   Scrollbars
+   --------------------------------------------------------------------------- */
+.scroll-region {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.scroll-region::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-region::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+.scroll-region::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* ---------------------------------------------------------------------------
+   Motion
+   --------------------------------------------------------------------------- */
+@keyframes rise-fade {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-rise {
+  animation: rise-fade 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes value-bump {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.value-bump {
+  animation: value-bump 0.35s ease-out;
+}
+@keyframes mint-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(110, 168, 255, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(110, 168, 255, 0.14);
+  }
+}
+@keyframes dial-settle {
+  from {
+    opacity: 0.6;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .value-bump,
+  .round.mint:not(:disabled),
+  .dial-center,
+  .space-bg .stars-far,
+  .space-bg .stars-near,
+  .space-bg .comet {
+    animation: none !important;
+  }
+  .space-bg .stars-near {
+    opacity: 0.6;
+  }
+  .space-bg .comet {
+    display: none;
+  }
+  .dial-value {
+    transition: none;
+  }
+  .bar-fill {
+    transition: none;
+  }
+}
+
+/* ===========================================================================
+   App shell â€” slim left rail + minimal top bar (ported from mockup)
+   =========================================================================== */
+.rail {
+  width: 214px;
+  flex: none;
+  background: var(--rail);
+  border-right: 1px solid var(--border);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.rail .brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.rail .brand .mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(110, 168, 255, 0.4);
+  background: rgba(110, 168, 255, 0.12);
+  box-shadow: 0 0 16px rgba(110, 168, 255, 0.2);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  color: #e8f0ff;
+}
+.theme-void .rail .brand .mark {
+  border-color: rgba(110, 168, 255, 0.3);
+  background: rgba(110, 168, 255, 0.08);
+  box-shadow: none;
+  color: var(--mint-strong);
+}
+.rail .brand .name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 3px;
+  font-size: 13px;
+  color: #fff;
+}
+.rail .brand .sub {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.5px;
+}
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  width: 100%;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.nav-item svg {
+  width: 18px;
+  height: 18px;
+}
+.nav-item:hover {
+  background: var(--card);
+  color: #fff;
+}
+.nav-item[data-active="true"] {
+  background: var(--card2);
+  color: #fff;
+}
+.rail .spacer {
+  margin-top: auto;
+}
+/* Refined footer: a quiet label + crisp mint value, aligned with a hairline
+   separator and the version â€” understated, not a heavy glass box. */
+.rail .foot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 8px;
+}
+.rail .foot .l {
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.rail .foot .v {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--mint-strong);
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--glow-mint);
+}
+.rail .foot .ver {
+  font-size: 10px;
+  color: var(--dim);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Top bar */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 30px;
+  border-bottom: 1px solid var(--border);
+}
+.crumb {
+  font-size: 14px;
+  color: var(--muted);
+}
+.crumb b {
+  color: #fff;
+  font-weight: 600;
+}
+.crumb .sep {
+  margin: 0 2px;
+  color: var(--dim);
+}
+.topbar .drive {
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.topbar .drive .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--progress);
+  box-shadow: 0 0 8px var(--progress-glow);
+}
+.theme-void .topbar .drive .dot {
+  background: var(--mint-strong);
+  box-shadow: none;
+}
+
+/* ===========================================================================
+   Dashboard
+   =========================================================================== */
+.dash {
+  max-width: 960px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 30px 34px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dash-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.dash-head .t {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+.dash-head .s {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 4px;
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.kpi {
+  padding: 22px 24px;
+}
+.kpi .k {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.kpi .v {
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  margin-top: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.kpi .v.mint {
+  color: var(--mint-strong);
+  text-shadow: var(--glow-mint);
+}
+.kpi .note {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 8px;
+}
+.dash-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.ch {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.usage .mount {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+.usage .mount .m {
+  font-size: 15px;
+  font-weight: 600;
+}
+.usage .mount .f {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.usage .pct {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.brk {
+  margin-top: 16px;
+}
+.brk-row {
+  margin-bottom: 15px;
+}
+.brk-row:last-child {
+  margin-bottom: 0;
+}
+.brk-row .top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.brk-row .top .nm {
+  color: rgba(255, 255, 255, 0.82);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.brk-row .top .nm svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.brk-row .top .vv {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.brk-row .b {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+.brk-row .b > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s ease;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dash-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 44px 24px;
+  text-align: center;
+}
+.dash-empty p {
+  font-size: 14px;
+  color: var(--muted);
+  max-width: 360px;
+}
+
+/* ===========================================================================
+   Clean flow â€” dial control panel
+   =========================================================================== */
+.stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 30px 34px 40px;
+}
+.toprow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.topcard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 19px 22px;
+}
+.topcard .k {
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.topcard .s {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 3px;
+  font-weight: 500;
+}
+.topcard .val {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.topcard .val.mint {
+  color: var(--mint-strong);
+  text-shadow: var(--glow-mint);
+}
+.dialrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 38px;
+  margin: 26px 0;
+}
+/* Keeps dial centered when only one side has a round action. */
+.dial-spacer {
+  width: 72px;
+  flex: none;
+  visibility: hidden;
+  pointer-events: none;
+}
+.bottomrow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.segcard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 20px;
+}
+.segcard .k {
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.segcard .cur {
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 3px;
+}
+.infocard {
+  padding: 15px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.infocard .l {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.infocard .r {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 62%;
+}
+
+/* ===========================================================================
+   Review
+   =========================================================================== */
+.rev-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 6px;
+}
+.rev-head .k {
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.rev-head .big {
+  font-family: var(--font-display);
+  font-size: 46px;
+  font-weight: 500;
+  letter-spacing: -2px;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--glow-text);
+}
+.rev-head .sub {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 6px;
+}
+.rev-list {
+  max-height: 44vh;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.rev-list::-webkit-scrollbar {
+  width: 8px;
+}
+.rev-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+.cat {
+  padding: 18px 20px;
+}
+.cat .head {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.cat .head .icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--track);
+  display: grid;
+  place-items: center;
+}
+.cat .head .icon svg {
+  width: 19px;
+  height: 19px;
+  color: var(--muted);
+}
+.cat .head .t {
+  flex: 1;
+  min-width: 0;
+}
+.cat .head .name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.cat .head .desc {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+.cat .head .sz {
+  font-size: 16px;
+  font-weight: 700;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+/* Collapsible section toggle (icon + name + chevron) */
+.cat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cat-toggle .t {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.cat-toggle .desc {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cat-toggle .chev {
+  width: 18px;
+  height: 18px;
+  color: var(--dim);
+  flex: none;
+  transition: transform 0.2s ease;
+}
+.cat-open .cat-toggle .chev {
+  transform: rotate(180deg);
+}
+.rows {
+  margin-top: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 8px;
+  border-radius: 11px;
+  transition: background-color 0.15s ease;
+}
+.row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.tier-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.tier-dot.safe {
+  background: var(--mint-strong);
+}
+.tier-dot.review {
+  background: var(--amber);
+}
+.tier-dot.caution {
+  background: var(--rose);
+}
+.row .info {
+  flex: 1;
+  min-width: 0;
+}
+.row .info .n {
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row .info .p {
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row .rsz {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: right;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.row .rsz .stale {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--dim);
+  margin-top: 2px;
+}
+.actionbar {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 20px;
+}
+.actionbar .sel {
+  font-size: 14px;
+  color: var(--muted);
+}
+.actionbar .sel b {
+  color: #fff;
+}
+.actionbar .right {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+/* ===========================================================================
+   Settings
+   =========================================================================== */
+.set-wrap {
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.set-title {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+}
+.set-sub {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+.set-card {
+  padding: 22px 24px;
+}
+.set-card .h {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 16px;
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.theme-opt {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  cursor: pointer;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.theme-opt[data-sel="true"] {
+  border-color: rgba(110, 168, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
+}
+.theme-void .theme-opt[data-sel="true"] {
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+.theme-opt .sw {
+  width: 56px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  flex: none;
+}
+.theme-opt .n {
+  font-weight: 600;
+  font-size: 14px;
+}
+.theme-opt .d {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.set-row:first-of-type {
+  border-top: 0;
+}
+.set-row .rl {
+  font-size: 14px;
+  font-weight: 500;
+}
+.set-row .rd {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+.tierline {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+}
+.tierline .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex: none;
+}
+.tierline .tl {
+  font-size: 14px;
+  font-weight: 600;
+}
+.tierline .td {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.about-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.about-name .ver {
+  color: var(--dim);
+  font-weight: 400;
+}
+.about-desc {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+/* ===========================================================================
+   Shared helpers â€” empty states, scope row, warnings, compact buttons
+   =========================================================================== */
+.scope-row {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.scope-row .link {
+  background: transparent;
+  border: 0;
+  color: var(--mint-strong);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.scope-row .link:hover {
+  filter: brightness(1.1);
+}
+.err-line {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--rose);
+}
+.empty-panel {
+  padding: 48px 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: 40px;
+}
+.empty-panel .t {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+}
+.empty-panel .s {
+  color: var(--muted);
+  font-size: 14px;
+}
+.warn-card {
+  padding: 14px 18px;
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.08);
+}
+.warn-card .t {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+  margin-bottom: 4px;
+}
+.warn-card ul {
+  font-size: 12px;
+  color: rgba(251, 191, 36, 0.8);
+  padding-left: 18px;
+  list-style: disc;
+}
+
+/* Skipped-items panel on the Done screen. */
+.skip-card {
+  margin-top: 14px;
+  padding: 16px 20px;
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(251, 191, 36, 0.05);
+}
+.skip-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.skip-head .t {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+}
+.skip-head .s {
+  font-size: 12px;
+  color: var(--muted);
+}
+.skip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.skip-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.skip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.skip-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.skip-path {
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.skip-reason {
+  font-size: 12px;
+  color: rgba(251, 191, 36, 0.85);
+  margin-top: 2px;
+}
+.skip-reveal {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+}
+.btn-sm {
+  padding: 9px 18px;
+  font-size: 13px;
+}
+.btn-confirm-danger {
+  border-color: rgba(251, 113, 133, 0.5);
+  color: #fecdd3;
+}
+.set-row.flush .rl-wrap {
+  max-width: 60%;
+}
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.link-quiet {
+  background: transparent;
+  border: 0;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.stage-top {
+  justify-content: flex-start;
+}
+.usage-pad,
+.panel-pad {
+  padding: 22px 24px;
+}
+.modal-rule {
+  border-color: var(--border);
+}

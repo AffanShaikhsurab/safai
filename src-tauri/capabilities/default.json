@@ -1,0 +1,18 @@
+{
+  "identifier": "default",
+  "description": "Safai main window capabilities (least privilege).",
+  "windows": ["main"],
+  "platforms": ["windows"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "os:default",
+    "store:default",
+    "notification:default",
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$HOME/**/*" }]
+    }
+  ]
+}
