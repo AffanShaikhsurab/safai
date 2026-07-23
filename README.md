@@ -1,12 +1,18 @@
 <div align="center">
 
-# 🧹 Safai
+<img src="assets/safai-banner.png" alt="Safai — Reclaim developer disk space" width="100%" />
+
+<br />
+
+<img src="assets/safai-logo.png" alt="Safai logo" width="96" />
 
 ### Reclaim gigabytes of disk space on your dev machine — safely.
 
 Safai finds the caches, build artifacts, and junk your tools quietly pile up,
 tells you what's safe to remove, and cleans it up to the Recycle Bin in a couple
 of clicks. No guesswork. No `rm -rf` regrets.
+
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20.exe-2f5fad?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/AffanShaikhsurab/safai/releases/latest)
 
 </div>
 
@@ -45,8 +51,8 @@ sorted picture of what you can get back:
   review exactly what's there so far.
 - **🔔 Get notified** — kick off a scan or cleanup and walk away; Safai pings you
   when it's done.
-- **🌌 Made to look at** — a calm, modern UI with two themes: **Nebula** (a deep
-  night-sky gradient) and **Cursor Black** (flat true black).
+- **🌌 Made to look at** — a calm, modern UI with two themes: **Nebula** (night
+  sky, stars & comets) and **Void** (charcoal dark with hairline dividers).
 
 ## How it helps
 
@@ -60,6 +66,14 @@ sorted picture of what you can get back:
 ---
 
 ## Getting started
+
+### Download (Windows)
+
+Grab the latest installer from
+[**Releases**](https://github.com/AffanShaikhsurab/safai/releases/latest) —
+download the `.exe` and run it.
+
+### Build from source
 
 Safai is a small native desktop app (built with [Tauri](https://tauri.app),
 Rust, and SolidJS). It currently targets **Windows**.

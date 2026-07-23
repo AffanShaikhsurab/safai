@@ -816,6 +816,19 @@ html.theme-void body {
   text-align: left;
   width: 100%;
 }
+.rail .brand .mark-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  border: 1px solid rgba(110, 168, 255, 0.35);
+  box-shadow: 0 0 14px rgba(110, 168, 255, 0.18);
+}
+.theme-void .rail .brand .mark-img {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
 .rail .brand .mark {
   width: 36px;
   height: 36px;

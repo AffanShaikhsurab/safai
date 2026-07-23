@@ -1,6 +1,7 @@
 import { type Component, For, type JSX } from "solid-js";
 import { appStore, type View } from "../state/store";
 import { formatBytes } from "../lib/format";
+import logoUrl from "../assets/logo.png";
 
 /** Small inline icons (stroke = currentColor). */
 const icon = (children: JSX.Element): Component<{ class?: string }> => (p) =>
@@ -66,7 +67,7 @@ const Sidebar: Component = () => {
         onClick={() => go("dashboard")}
         title="Safai — go to dashboard"
       >
-        <span class="mark">S</span>
+        <img class="mark-img" src={logoUrl} alt="" width={36} height={36} />
         <span>
           <span class="name">SAFAI</span>
           <span class="sub">Disk cleanup</span>
