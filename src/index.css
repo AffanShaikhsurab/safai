@@ -522,13 +522,21 @@ html.theme-void body {
   width: 21px;
   height: 21px;
   border-radius: 7px;
-  border: 1.5px solid var(--border);
+  /* Stronger border + a subtle fill so the *unchecked* box is clearly an
+     interactive control on the dark glass (previously it used --border at
+     0.12 alpha and was effectively invisible, so items that aren't
+     pre-selected — e.g. all of "Other Large Items" — looked unselectable). */
+  border: 1.5px solid var(--border-strong);
+  background: rgba(160, 190, 255, 0.06);
   display: grid;
   place-items: center;
   cursor: pointer;
   flex: none;
   color: transparent;
   transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.row:hover .check {
+  border-color: var(--mint-strong);
 }
 .check[data-on="true"] {
   background: var(--mint);
@@ -1360,6 +1368,7 @@ html.theme-void body {
   gap: 3px;
 }
 .row {
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 13px;

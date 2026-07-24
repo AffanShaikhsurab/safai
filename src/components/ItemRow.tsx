@@ -22,13 +22,26 @@ const ItemRow: Component<{ item: CleanupItem }> = (props) => {
   };
 
   return (
-    <div class="row group">
+    <div
+      class="row group"
+      role="button"
+      tabindex="0"
+      aria-pressed={checked()}
+      onClick={toggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      }}
+    >
       <span class={`tier-dot ${props.item.tier}`} aria-hidden="true" />
 
       <span
         class="check"
         data-on={checked() ? "true" : "false"}
         title="Select for cleanup"
+        onClick={(e) => e.stopPropagation()}
       >
         <svg
           viewBox="0 0 24 24"
