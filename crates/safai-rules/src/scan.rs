@@ -231,10 +231,18 @@ struct PendingDir {
 
 /// Size every directory job in `paths` **concurrently** in one shared
 /// work-stealing pool (`safai_core::size_many`), while this thread polls the
-/// live counters and forwards `Progress` events (keeping `on_event` single-
-/// threaded — no `Sync` bound needed). Bounded by `SIZE_TIME_BUDGET` so the
-/// scan can never hang, even on a pathological tree. Returns per-path sizes in
-/// order.
+/// live counters.
+///
+/// As each folder finishes sizing, `make_item` is called with its
+/// `(index, size)`; when it returns `Some(item)` a `Found` event is emitted
+/// **immediately**, so the UI's found-item counter climbs live during sizing
+/// instead of jumping only when the whole pool drains (the symptom that made
+/// scans look stuck near the end). `Progress` events are forwarded throughout.
+///
+/// Both callbacks run on this single polling thread, so neither needs a `Sync`
+/// bound. Bounded by `SIZE_TIME_BUDGET` so the scan can never hang, even on a
+/// pathological tree. Every job is handed to `make_item` exactly once.
+#[allow(clippy::too_many_arguments)]
 fn size_dirs_with_progress(
     paths: &[PathBuf],
     cancel: &AtomicBool,
@@ -242,26 +250,41 @@ fn size_dirs_with_progress(
     base_checked: u32,
     rules_total: u32,
     on_event: &mut dyn FnMut(ScanEvent),
+    make_item: &mut dyn FnMut(usize, u64) -> Option<CleanupItem>,
     warnings: &mut Vec<String>,
-) -> Vec<u64> {
-    if paths.is_empty() {
-        return Vec::new();
+) {
+    let total_jobs = paths.len();
+    if total_jobs == 0 {
+        return;
     }
 
     let progress = AtomicU64::new(0);
     let completed = std::sync::atomic::AtomicUsize::new(0);
+    let per_job_total: Vec<AtomicU64> = (0..total_jobs).map(|_| AtomicU64::new(0)).collect();
+    let per_job_done: Vec<AtomicBool> = (0..total_jobs).map(|_| AtomicBool::new(false)).collect();
     let local_cancel = AtomicBool::new(false);
     let start = Instant::now();
-    let total_jobs = paths.len();
-    let mut sizes: Vec<u64> = Vec::new();
+
+    // Jobs already handed to `make_item`, so each is emitted exactly once.
+    let mut handled: Vec<bool> = vec![false; total_jobs];
 
     std::thread::scope(|s| {
         let progress_ref = &progress;
         let completed_ref = &completed;
+        let per_job_total_ref = &per_job_total;
+        let per_job_done_ref = &per_job_done;
         let local_ref = &local_cancel;
         let paths_ref = paths;
-        let handle =
-            s.spawn(move || safai_core::size_many(paths_ref, local_ref, progress_ref, completed_ref));
+        let handle = s.spawn(move || {
+            safai_core::size_many(
+                paths_ref,
+                local_ref,
+                progress_ref,
+                completed_ref,
+                per_job_total_ref,
+                per_job_done_ref,
+            );
+        });
 
         while !handle.is_finished() {
             std::thread::sleep(SIZE_PROGRESS_INTERVAL);
@@ -269,6 +292,18 @@ fn size_dirs_with_progress(
             // Propagate global cancellation or a blown time budget to the walk.
             if cancel.load(Ordering::Relaxed) || start.elapsed() >= SIZE_TIME_BUDGET {
                 local_cancel.store(true, Ordering::Relaxed);
+            }
+
+            // Emit Found for every folder that finished sizing since the last
+            // poll, so the item counter advances live.
+            for idx in 0..total_jobs {
+                if !handled[idx] && per_job_done[idx].load(Ordering::Acquire) {
+                    handled[idx] = true;
+                    let size = per_job_total[idx].load(Ordering::Relaxed);
+                    if let Some(item) = make_item(idx, size) {
+                        on_event(ScanEvent::Found { item });
+                    }
+                }
             }
 
             let cur = progress_ref.load(Ordering::Relaxed);
@@ -287,8 +322,20 @@ fn size_dirs_with_progress(
             });
         }
 
-        sizes = handle.join().unwrap_or_default();
+        let _ = handle.join();
     });
+
+    // Final sweep: hand over any jobs not yet emitted (finished between the
+    // last poll and join, or left partial by cancel/timeout).
+    for idx in 0..total_jobs {
+        if !handled[idx] {
+            handled[idx] = true;
+            let size = per_job_total[idx].load(Ordering::Relaxed);
+            if let Some(item) = make_item(idx, size) {
+                on_event(ScanEvent::Found { item });
+            }
+        }
+    }
 
     if start.elapsed() >= SIZE_TIME_BUDGET && !cancel.load(Ordering::Relaxed) {
         warnings.push(format!(
@@ -296,12 +343,6 @@ fn size_dirs_with_progress(
             SIZE_TIME_BUDGET.as_secs()
         ));
     }
-
-    // Defensive: guarantee one size per job even if the walk returned early.
-    if sizes.len() != total_jobs {
-        sizes.resize(total_jobs, 0);
-    }
-    sizes
 }
 
 /// Run the rules-based scan.
@@ -554,28 +595,20 @@ pub fn run_scan(
     // Phase 2 — size ALL directory jobs together in one shared work-stealing
     // pool. Every worker steals across all folders, so a single huge folder
     // (Hugging Face cache, a massive node_modules, …) is sized with full
-    // parallelism and can never block the folders behind it.
+    // parallelism and can never block the folders behind it. Crucially, each
+    // folder's `Found` event is emitted the moment its size is known (via
+    // `make_item` below), so the UI's found-item counter climbs live during
+    // sizing instead of jumping only when the whole pool drains.
+    //
+    // Rule-based dirs are always surfaced; large-folder candidates get the
+    // min-size / overlap / count-cap filtering applied as each one completes.
     // ------------------------------------------------------------------
     let file_items = items.len() as u32;
     let rules_total: u32 = file_items + dir_jobs.len() as u32;
     let job_paths: Vec<PathBuf> = dir_jobs.iter().map(|j| j.path.clone()).collect();
 
-    let sizes = size_dirs_with_progress(
-        &job_paths,
-        cancel,
-        found_bytes,
-        file_items,
-        rules_total,
-        on_event,
-        &mut warnings,
-    );
-
-    // ------------------------------------------------------------------
-    // Phase 3 — build items from the measured sizes and emit Found events.
-    // Rule-based dirs are always surfaced; large-folder candidates get the
-    // min-size / overlap / count-cap filtering applied here.
-    // ------------------------------------------------------------------
     // Paths already attributed to a specific rule (for large-folder overlap).
+    // Built before sizing so the overlap check is order-independent.
     let mut existing_lower: Vec<String> = items
         .iter()
         .map(|it| it.path.trim_end_matches('/').to_lowercase())
@@ -585,40 +618,56 @@ pub fn run_scan(
         existing_lower.push(job.disp.trim_end_matches('/').to_lowercase());
     }
 
-    let mut emitted_large = 0usize;
-    for (i, job) in dir_jobs.iter().enumerate() {
-        let size = sizes.get(i).copied().unwrap_or(0);
+    {
+        let mut emitted_large = 0usize;
+        // Build a `CleanupItem` for job `idx` once its `size` is known. Returns
+        // `None` when a large-folder candidate is filtered out (overlap, count
+        // cap, or below the min-size threshold); rule-based dirs always pass.
+        // Also records the item into `items` for final aggregation.
+        let mut make_item = |idx: usize, size: u64| -> Option<CleanupItem> {
+            let job = &dir_jobs[idx];
 
-        if job.is_large_folder {
-            let low = job.disp.trim_end_matches('/').to_lowercase();
-            if path_overlaps(&low, &existing_lower) {
-                continue;
+            if job.is_large_folder {
+                let low = job.disp.trim_end_matches('/').to_lowercase();
+                if path_overlaps(&low, &existing_lower) {
+                    return None;
+                }
+                if emitted_large >= MAX_LARGE_FOLDERS {
+                    return None;
+                }
+                if size < MIN_LARGE_FOLDER_BYTES {
+                    return None;
+                }
+                emitted_large += 1;
             }
-            if emitted_large >= MAX_LARGE_FOLDERS {
-                continue;
-            }
-            if size < MIN_LARGE_FOLDER_BYTES {
-                continue;
-            }
-            emitted_large += 1;
-        }
 
-        let item = CleanupItem {
-            id: stable_id(&job.disp),
-            rule_id: job.rule_id.clone(),
-            label: job.label.clone(),
-            category: job.category,
-            tier: job.tier,
-            path: job.disp.clone(),
-            size_bytes: size,
-            regenerates: job.regenerates,
-            last_modified_secs: last_modified_secs(&job.path),
-            note: job.note.clone(),
-            selected_by_default: job.selected_by_default,
+            let item = CleanupItem {
+                id: stable_id(&job.disp),
+                rule_id: job.rule_id.clone(),
+                label: job.label.clone(),
+                category: job.category,
+                tier: job.tier,
+                path: job.disp.clone(),
+                size_bytes: size,
+                regenerates: job.regenerates,
+                last_modified_secs: last_modified_secs(&job.path),
+                note: job.note.clone(),
+                selected_by_default: job.selected_by_default,
+            };
+            items.push(item.clone());
+            Some(item)
         };
-        found_bytes = found_bytes.saturating_add(size);
-        on_event(ScanEvent::Found { item: item.clone() });
-        items.push(item);
+
+        size_dirs_with_progress(
+            &job_paths,
+            cancel,
+            found_bytes,
+            file_items,
+            rules_total,
+            on_event,
+            &mut make_item,
+            &mut warnings,
+        );
     }
 
     if cancel.load(Ordering::Relaxed) {

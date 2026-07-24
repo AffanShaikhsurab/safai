@@ -242,28 +242,41 @@ type TaggedTask = (usize, PathBuf);
 /// the big folder is sized with full parallelism while the overall scan keeps
 /// making visible progress.
 ///
-/// Live observability for the UI (all updated as the walk proceeds):
+/// Live observability for the UI (all updated as the walk proceeds). The
+/// caller allocates these so it can observe them from another thread while the
+/// pool runs:
 /// * `progress` — global bytes discovered so far across every root.
 /// * `completed` — number of roots fully finished so far.
+/// * `per_job_total[j]` — bytes discovered so far for root `j`; **final** once
+///   `per_job_done[j]` flips true.
+/// * `per_job_done[j]` — set to `true` the instant root `j` is fully sized.
+///   This lets the caller emit a per-folder result the moment it is known
+///   (so a UI item counter can climb live) instead of waiting for the whole
+///   pool to drain.
 ///
-/// Returns per-root totals in the same order as `roots`. Honors `cancel`
-/// throughout (checked at the top of every worker iteration); on cancel it
-/// returns the partial totals gathered so far.
+/// `per_job_total` and `per_job_done` must both have length `roots.len()`.
+///
+/// Honors `cancel` throughout (checked at the top of every worker iteration);
+/// on cancel the per-job totals hold whatever partial sums were gathered.
 pub fn size_many(
     roots: &[PathBuf],
     cancel: &AtomicBool,
     progress: &AtomicU64,
     completed: &AtomicUsize,
-) -> Vec<u64> {
+    per_job_total: &[AtomicU64],
+    per_job_done: &[AtomicBool],
+) {
     let n = roots.len();
     if n == 0 {
-        return Vec::new();
+        return;
     }
+    debug_assert_eq!(per_job_total.len(), n, "per_job_total must match roots len");
+    debug_assert_eq!(per_job_done.len(), n, "per_job_done must match roots len");
 
     let thread_count = size_thread_count();
 
-    // Per-job accumulators / outstanding-task counts.
-    let per_job_total: Vec<AtomicU64> = (0..n).map(|_| AtomicU64::new(0)).collect();
+    // Per-job outstanding-task counts (internal; the totals + done flags are
+    // caller-owned so they can be observed live).
     let per_job_active: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(1)).collect();
     // Total outstanding tasks across all jobs (drives pool shutdown).
     let active = AtomicUsize::new(n);
@@ -282,8 +295,9 @@ pub fn size_many(
             let injector = &injector;
             let stealers = &stealers;
             let active = &active;
-            let per_job_total = &per_job_total;
+            let per_job_total = &*per_job_total;
             let per_job_active = &per_job_active;
+            let per_job_done = &*per_job_done;
             let progress = &*progress;
             let completed = &*completed;
             s.spawn(move || {
@@ -294,6 +308,7 @@ pub fn size_many(
                     active,
                     per_job_total,
                     per_job_active,
+                    per_job_done,
                     progress,
                     completed,
                     cancel,
@@ -301,8 +316,6 @@ pub fn size_many(
             });
         }
     });
-
-    per_job_total.iter().map(|a| a.load(Ordering::Relaxed)).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -313,6 +326,7 @@ fn size_many_worker(
     active: &AtomicUsize,
     per_job_total: &[AtomicU64],
     per_job_active: &[AtomicUsize],
+    per_job_done: &[AtomicBool],
     progress: &AtomicU64,
     completed: &AtomicUsize,
     cancel: &AtomicBool,
@@ -346,8 +360,11 @@ fn size_many_worker(
                 }
 
                 // This directory task is done. If it was the last outstanding
-                // task for its job, that job is fully sized.
+                // task for its job, that job is fully sized — publish the done
+                // flag (Release) so an observer that reads it (Acquire) also
+                // sees the final `per_job_total[job]`.
                 if per_job_active[job].fetch_sub(1, Ordering::SeqCst) == 1 {
+                    per_job_done[job].store(true, Ordering::Release);
                     completed.fetch_add(1, Ordering::Relaxed);
                 }
                 active.fetch_sub(1, Ordering::SeqCst);
@@ -585,6 +602,48 @@ mod tests {
         // Non-pruned directories are fully walked.
         assert!(visited.contains(&keep), "keep should be visited");
         assert!(visited.contains(&inner_keep), "inner_keep should be visited");
+    }
+
+    #[test]
+    fn size_many_reports_per_job_totals_and_done() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // job a: a/x.bin (10) + a/sub/y.bin (40) = 50
+        let a = root.join("a");
+        let a_sub = a.join("sub");
+        fs::create_dir_all(&a_sub).expect("create a");
+        write_file(&a.join("x.bin"), &[0u8; 10]);
+        write_file(&a_sub.join("y.bin"), &[0u8; 40]);
+
+        // job b: b/z.bin (7) = 7
+        let b = root.join("b");
+        fs::create_dir_all(&b).expect("create b");
+        write_file(&b.join("z.bin"), &[0u8; 7]);
+
+        let roots = vec![a.clone(), b.clone()];
+        let cancel = AtomicBool::new(false);
+        let progress = AtomicU64::new(0);
+        let completed = AtomicUsize::new(0);
+        let per_job_total: Vec<AtomicU64> = (0..roots.len()).map(|_| AtomicU64::new(0)).collect();
+        let per_job_done: Vec<AtomicBool> =
+            (0..roots.len()).map(|_| AtomicBool::new(false)).collect();
+
+        size_many(
+            &roots,
+            &cancel,
+            &progress,
+            &completed,
+            &per_job_total,
+            &per_job_done,
+        );
+
+        assert_eq!(per_job_total[0].load(Ordering::Relaxed), 50, "job a total");
+        assert_eq!(per_job_total[1].load(Ordering::Relaxed), 7, "job b total");
+        assert!(per_job_done[0].load(Ordering::Acquire), "job a done");
+        assert!(per_job_done[1].load(Ordering::Acquire), "job b done");
+        assert_eq!(completed.load(Ordering::Relaxed), 2, "both jobs completed");
+        assert_eq!(progress.load(Ordering::Relaxed), 57, "global bytes total");
     }
 
     #[test]
