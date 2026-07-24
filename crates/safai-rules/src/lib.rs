@@ -18,5 +18,5 @@ pub use model::{
 };
 
 // Re-export the primary entry points used by WS3.
-pub use detect::{default_roots, detect_tools};
+pub use detect::{default_roots, detect_tools, project_scan_roots};
 pub use scan::{label_for, run_scan, ScanConfig};

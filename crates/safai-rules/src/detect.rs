@@ -180,6 +180,53 @@ pub fn default_roots() -> Vec<PathBuf> {
     roots
 }
 
+/// Targeted roots for the pattern-rule discovery walk (hunting `node_modules`,
+/// `target`, build dirs, …).
+///
+/// This is deliberately **not** the whole user profile + `AppData`: a recursive
+/// walk of `AppData` (npm/pip/browser caches, Electron app storage) is enormous
+/// and virtually never contains the project artifacts we want, which is what
+/// made scans stall. Instead we return the handful of common places developers
+/// keep code — only those that actually exist on disk, so callers never filter.
+pub fn project_scan_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    if let Some(home) = env_nonempty("USERPROFILE") {
+        let home = PathBuf::from(home);
+        // Common dev/project folder names directly under the user profile.
+        // Windows paths are case-insensitive, so a single spelling suffices.
+        const DEV_DIR_NAMES: &[&str] = &[
+            "Desktop",
+            "Documents",
+            "Downloads",
+            "source",
+            "src",
+            "code",
+            "dev",
+            "projects",
+            "repos",
+            "work",
+            "git",
+            "GitHub",
+            "Development",
+            "workspace",
+        ];
+        for name in DEV_DIR_NAMES {
+            let p = home.join(name);
+            if p.exists() && !roots.iter().any(|e| e == &p) {
+                roots.push(p);
+            }
+        }
+        // GitHub Desktop's default clone location.
+        let gh = home.join("Documents").join("GitHub");
+        if gh.exists() && !roots.iter().any(|e| e == &gh) {
+            roots.push(gh);
+        }
+    }
+
+    roots
+}
+
 /// Normalize a path for display: forward slashes, per §7.
 pub fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")

@@ -58,4 +58,4 @@ pub use fast_readdir::{read_dir_fast, FastEntry};
 pub use output::Format;
 
 // Re-export the cleanup measure helpers used by the rules engine (WS2).
-pub use measure::{dir_size, dir_size_into, walk_pruned};
+pub use measure::{dir_size, dir_size_into, size_many, walk_pruned, WalkOptions};

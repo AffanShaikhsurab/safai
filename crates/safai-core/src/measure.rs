@@ -20,9 +20,9 @@
 // read.
 
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
-use std::fs::{self, FileType};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::Instant;
 
 /// How often (in directory-entry iterations) the cancel flag is consulted
 /// inside a single directory listing. Checking every entry is cheap (a
@@ -228,79 +228,277 @@ fn find_size_task(
     None
 }
 
-/// Walk directories starting at `roots`, invoking `on_dir` for every
-/// subdirectory discovered. When `prune(path, file_type)` returns `true` for a
-/// directory, that directory is still reported via `on_dir` but is **not**
-/// descended into — this is what lets the rules engine find artifact
-/// directories (e.g. `node_modules`, `target`) without traversing the millions
-/// of files inside them.
+/// A work item for [`size_many`]: which job a directory belongs to, and the
+/// directory path to list.
+type TaggedTask = (usize, PathBuf);
+
+/// Size **many independent directory roots at once** using a *single* shared
+/// work-stealing pool.
 ///
-/// Uses the optimized `read_dir_fast` on Windows for faster enumeration.
+/// This is the key to never getting "stuck" on one giant folder (e.g. the
+/// Hugging Face cache): instead of sizing folders one-by-one (where a huge
+/// folder blocks everything behind it), every worker steals tasks across *all*
+/// roots. When the small folders drain, all threads pile onto the big one — so
+/// the big folder is sized with full parallelism while the overall scan keeps
+/// making visible progress.
+///
+/// Live observability for the UI (all updated as the walk proceeds):
+/// * `progress` — global bytes discovered so far across every root.
+/// * `completed` — number of roots fully finished so far.
+///
+/// Returns per-root totals in the same order as `roots`. Honors `cancel`
+/// throughout (checked at the top of every worker iteration); on cancel it
+/// returns the partial totals gathered so far.
+pub fn size_many(
+    roots: &[PathBuf],
+    cancel: &AtomicBool,
+    progress: &AtomicU64,
+    completed: &AtomicUsize,
+) -> Vec<u64> {
+    let n = roots.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let thread_count = size_thread_count();
+
+    // Per-job accumulators / outstanding-task counts.
+    let per_job_total: Vec<AtomicU64> = (0..n).map(|_| AtomicU64::new(0)).collect();
+    let per_job_active: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(1)).collect();
+    // Total outstanding tasks across all jobs (drives pool shutdown).
+    let active = AtomicUsize::new(n);
+
+    let injector: Injector<TaggedTask> = Injector::new();
+    for (j, root) in roots.iter().enumerate() {
+        injector.push((j, root.clone()));
+    }
+
+    let workers: Vec<Worker<TaggedTask>> =
+        (0..thread_count).map(|_| Worker::new_lifo()).collect();
+    let stealers: Vec<Stealer<TaggedTask>> = workers.iter().map(|w| w.stealer()).collect();
+
+    std::thread::scope(|s| {
+        for worker in workers {
+            let injector = &injector;
+            let stealers = &stealers;
+            let active = &active;
+            let per_job_total = &per_job_total;
+            let per_job_active = &per_job_active;
+            let progress = &*progress;
+            let completed = &*completed;
+            s.spawn(move || {
+                size_many_worker(
+                    worker,
+                    injector,
+                    stealers,
+                    active,
+                    per_job_total,
+                    per_job_active,
+                    progress,
+                    completed,
+                    cancel,
+                );
+            });
+        }
+    });
+
+    per_job_total.iter().map(|a| a.load(Ordering::Relaxed)).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn size_many_worker(
+    worker: Worker<TaggedTask>,
+    injector: &Injector<TaggedTask>,
+    stealers: &[Stealer<TaggedTask>],
+    active: &AtomicUsize,
+    per_job_total: &[AtomicU64],
+    per_job_active: &[AtomicUsize],
+    progress: &AtomicU64,
+    completed: &AtomicUsize,
+    cancel: &AtomicBool,
+) {
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+
+        match find_tagged_task(&worker, injector, stealers) {
+            Some((job, dir)) => {
+                let entries = crate::fast_readdir::read_dir_fast(&dir);
+                let mut local: u64 = 0;
+
+                for (i, entry) in entries.iter().enumerate() {
+                    if i % CANCEL_CHECK_STRIDE == 0 && cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if entry.is_dir {
+                        active.fetch_add(1, Ordering::SeqCst);
+                        per_job_active[job].fetch_add(1, Ordering::SeqCst);
+                        worker.push((job, entry.path.clone()));
+                    } else {
+                        local = local.saturating_add(entry.size);
+                    }
+                }
+
+                if local > 0 {
+                    per_job_total[job].fetch_add(local, Ordering::Relaxed);
+                    progress.fetch_add(local, Ordering::Relaxed);
+                }
+
+                // This directory task is done. If it was the last outstanding
+                // task for its job, that job is fully sized.
+                if per_job_active[job].fetch_sub(1, Ordering::SeqCst) == 1 {
+                    completed.fetch_add(1, Ordering::Relaxed);
+                }
+                active.fetch_sub(1, Ordering::SeqCst);
+            }
+            None => {
+                if active.load(Ordering::Acquire) == 0 {
+                    break;
+                }
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
+/// Tagged-task variant of [`find_size_task`].
+fn find_tagged_task(
+    worker: &Worker<TaggedTask>,
+    injector: &Injector<TaggedTask>,
+    stealers: &[Stealer<TaggedTask>],
+) -> Option<TaggedTask> {
+    if let Some(t) = worker.pop() {
+        return Some(t);
+    }
+    loop {
+        match injector.steal() {
+            Steal::Empty => break,
+            Steal::Success(t) => return Some(t),
+            Steal::Retry => continue,
+        }
+    }
+    for stealer in stealers {
+        loop {
+            match stealer.steal() {
+                Steal::Empty => break,
+                Steal::Success(t) => return Some(t),
+                Steal::Retry => continue,
+            }
+        }
+    }
+    None
+}
+
+/// Options controlling a [`walk_pruned`] traversal.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WalkOptions {
+    /// Maximum directory depth to descend, relative to each root (root = 0).
+    /// `None` means unbounded. Bounding the depth stops the walk from diving
+    /// into arbitrarily deep unrelated trees — artifact dirs like
+    /// `node_modules`/`target` live only a few levels below a project root, so
+    /// a modest cap keeps the walk cheap without missing real matches.
+    pub max_depth: Option<usize>,
+    /// Optional wall-clock deadline. When reached, the walk stops promptly and
+    /// [`walk_pruned`] returns `true` (timed out). This guarantees the
+    /// discovery walk can never hang indefinitely on a pathological tree (a
+    /// reparse-point maze, a slow network mount, etc.).
+    pub deadline: Option<Instant>,
+}
+
+/// Walk directories starting at `roots`, invoking `on_dir` for every
+/// subdirectory discovered. When `prune(path)` returns `true` for a directory,
+/// that directory is still reported via `on_dir` but is **not** descended into
+/// — this lets the rules engine find artifact directories (e.g. `node_modules`,
+/// `target`) without traversing the millions of files inside them.
+///
+/// Uses the optimized `read_dir_fast` for enumeration. The directory
+/// classification (`is_dir`, which already excludes reparse points / junctions)
+/// comes straight from the directory listing, so — unlike the previous version
+/// — **no extra `symlink_metadata` syscall is made per directory**. On a tree
+/// with millions of directories this roughly halves the syscall count.
 ///
 /// Design note: this walker is intentionally **single-threaded**. Correctness
-/// and simplicity matter more than raw speed here because the pruning is what
-/// makes it fast — once a heavyweight directory is pruned we never touch its
-/// contents at all. A single-threaded walker also lets `on_dir` be a plain
+/// and simplicity matter more than raw speed here because pruning plus a depth
+/// bound are what keep it fast: once a heavyweight directory is pruned we never
+/// touch its contents. A single-threaded walker also lets `on_dir` be a plain
 /// `&mut dyn FnMut` (no `Sync`/locking requirement), which keeps the API
-/// ergonomic for the caller accumulating findings.
+/// ergonomic for the caller accumulating findings and streaming progress.
 ///
-/// Symlinked directories are not descended into (detected via `is_symlink`
-/// flag from the fast readdir), preventing the walk from escaping or looping.
+/// Symlinked / junction directories are never descended into (they are not
+/// reported as `is_dir` by the fast readdir), preventing the walk from escaping
+/// or looping.
 ///
 /// `cancel` is checked before reading each directory and while iterating
-/// entries; when set, the walk stops promptly.
+/// entries; when set, the walk stops promptly. Returns `true` if the walk was
+/// stopped because `opts.deadline` was reached, `false` otherwise (completed or
+/// cancelled).
 pub fn walk_pruned(
     roots: &[PathBuf],
     cancel: &AtomicBool,
-    prune: &(dyn Fn(&Path, &FileType) -> bool + Sync),
+    opts: WalkOptions,
+    prune: &(dyn Fn(&Path) -> bool + Sync),
     on_dir: &mut dyn FnMut(&Path),
-) {
-    // Explicit LIFO stack of directories still to descend into.
-    let mut stack: Vec<PathBuf> = roots.to_vec();
+) -> bool {
+    // Explicit LIFO stack of (directory, depth) still to descend into.
+    let mut stack: Vec<(PathBuf, usize)> = roots.iter().map(|r| (r.clone(), 0usize)).collect();
 
-    while let Some(dir) = stack.pop() {
+    while let Some((dir, depth)) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
-            return;
+            return false;
+        }
+        if let Some(dl) = opts.deadline {
+            if Instant::now() >= dl {
+                return true;
+            }
         }
 
         let entries = crate::fast_readdir::read_dir_fast(&dir);
 
         for (i, entry) in entries.iter().enumerate() {
-            if i % CANCEL_CHECK_STRIDE == 0 && cancel.load(Ordering::Relaxed) {
-                return;
+            if i % CANCEL_CHECK_STRIDE == 0 {
+                if cancel.load(Ordering::Relaxed) {
+                    return false;
+                }
+                if let Some(dl) = opts.deadline {
+                    if Instant::now() >= dl {
+                        return true;
+                    }
+                }
             }
 
-            // Only real directories are of interest. Symlinks are ignored
-            // (is_symlink entries cannot cause the walk to escape).
-            if entry.is_dir {
-                let child = &entry.path;
-                // Always report the directory to the caller.
-                on_dir(child);
+            // Only real directories are of interest. `is_dir` from the fast
+            // readdir already excludes reparse points (symlinks / junctions),
+            // so a symlink can never cause the walk to escape or loop, and no
+            // extra stat is needed to classify the entry.
+            if !entry.is_dir {
+                continue;
+            }
 
-                // Build a synthetic FileType for the prune predicate.
-                // We know it's a directory, so we get the real FileType via a
-                // quick metadata call. If that fails, assume not-pruned and descend.
-                let should_prune = match fs::symlink_metadata(child) {
-                    Ok(meta) => {
-                        let ft = meta.file_type();
-                        prune(child, &ft)
-                    }
-                    Err(_) => false,
-                };
+            let child = &entry.path;
+            // Always report the directory to the caller.
+            on_dir(child);
 
-                if !should_prune {
-                    stack.push(child.clone());
-                }
+            // Descend only when within the depth bound and not pruned.
+            let child_depth = depth + 1;
+            let within_depth = match opts.max_depth {
+                Some(max) => child_depth < max,
+                None => true,
+            };
+            if within_depth && !prune(child) {
+                stack.push((child.clone(), child_depth));
             }
         }
     }
+
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::Write;
     use std::sync::atomic::AtomicBool;
 
@@ -363,17 +561,16 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut visited: HashSet<PathBuf> = HashSet::new();
 
-        let prune = |path: &Path, ft: &FileType| -> bool {
-            ft.is_dir()
-                && path
-                    .file_name()
-                    .map(|n| n == "node_modules")
-                    .unwrap_or(false)
+        let prune = |path: &Path| -> bool {
+            path.file_name()
+                .map(|n| n == "node_modules")
+                .unwrap_or(false)
         };
 
         walk_pruned(
             std::slice::from_ref(&root.to_path_buf()),
             &cancel,
+            WalkOptions::default(),
             &prune,
             &mut |p: &Path| {
                 visited.insert(p.to_path_buf());
@@ -388,5 +585,66 @@ mod tests {
         // Non-pruned directories are fully walked.
         assert!(visited.contains(&keep), "keep should be visited");
         assert!(visited.contains(&inner_keep), "inner_keep should be visited");
+    }
+
+    #[test]
+    fn walk_pruned_respects_max_depth() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // root/a/b/c/d — each level one directory deep.
+        let a = root.join("a");
+        let b = a.join("b");
+        let c = b.join("c");
+        let d = c.join("d");
+        fs::create_dir_all(&d).expect("create deep tree");
+
+        let cancel = AtomicBool::new(false);
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+
+        // max_depth = 2: root(0) → a(1) reported+descended → b(2) reported but
+        // NOT descended, so c/d are never seen.
+        let opts = WalkOptions {
+            max_depth: Some(2),
+            deadline: None,
+        };
+        let prune = |_p: &Path| false;
+        walk_pruned(
+            std::slice::from_ref(&root.to_path_buf()),
+            &cancel,
+            opts,
+            &prune,
+            &mut |p: &Path| {
+                visited.insert(p.to_path_buf());
+            },
+        );
+
+        assert!(visited.contains(&a), "a (depth 1) should be reported");
+        assert!(visited.contains(&b), "b (depth 2) should be reported");
+        assert!(!visited.contains(&c), "c (depth 3) must not be reached");
+        assert!(!visited.contains(&d), "d (depth 4) must not be reached");
+    }
+
+    #[test]
+    fn walk_pruned_deadline_reports_timeout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("x").join("y")).expect("tree");
+
+        let cancel = AtomicBool::new(false);
+        // A deadline already in the past forces an immediate timeout.
+        let opts = WalkOptions {
+            max_depth: None,
+            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+        };
+        let prune = |_p: &Path| false;
+        let timed_out = walk_pruned(
+            std::slice::from_ref(&root.to_path_buf()),
+            &cancel,
+            opts,
+            &prune,
+            &mut |_p: &Path| {},
+        );
+        assert!(timed_out, "past deadline should report timeout");
     }
 }

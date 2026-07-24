@@ -6,7 +6,6 @@
 //! this crate free of any Tauri dependency — WS3 adapts it to a `Channel`.
 
 use std::collections::HashSet;
-use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -169,6 +168,33 @@ fn last_modified_secs(path: &Path) -> Option<u64> {
 /// How often the streaming sizing loop republishes progress to the UI.
 const SIZE_PROGRESS_INTERVAL: Duration = Duration::from_millis(120);
 
+/// Maximum depth (relative to each project scan root) the pattern-discovery
+/// walk descends. Artifact directories (`node_modules`, `target`, build dirs)
+/// sit only a few levels below a project root, so a modest cap keeps the walk
+/// bounded without missing real matches — and prevents it from crawling deep,
+/// unrelated trees (which is what made scans appear to "hang").
+const PROJECT_SCAN_MAX_DEPTH: usize = 8;
+
+/// Wall-clock safety budget for the pattern-discovery walk. If discovery is
+/// still running after this, it stops and records a warning. This guarantees
+/// the walk can never hang the scan, mirroring `SIZE_TIME_BUDGET` for sizing.
+const WALK_TIME_BUDGET: Duration = Duration::from_secs(45);
+
+/// Directory names the pattern-discovery walk will report but never descend
+/// into. These are large and/or irrelevant to project-artifact discovery:
+/// `appdata` is huge and already swept one level deep as its own roots; VCS and
+/// system folders never usefully contain the artifact dirs we hunt for.
+/// Everything here is matched case-insensitively against the directory name.
+const SKIP_DESCEND_NAMES: &[&str] = &[
+    "appdata",
+    ".git",
+    ".hg",
+    ".svn",
+    "$recycle.bin",
+    "windows",
+    "system volume information",
+];
+
 /// Safety net: if sizing a single directory exceeds this budget, stop walking
 /// it and report the partial size (with a warning). This guarantees the scan
 /// can never hang indefinitely on a pathological tree (a giant model cache on a
@@ -182,38 +208,61 @@ fn measure_file(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-/// Measure a directory while streaming a live `Progress` event as the running
-/// byte total climbs — so the UI never appears frozen on a huge directory
-/// (e.g. the Hugging Face model cache), and the scan is bounded by a time
-/// budget so it can never hang forever.
-///
-/// The heavy walk runs on a scoped worker thread that updates a shared atomic
-/// counter (`safai_core::dir_size_into`); meanwhile *this* thread polls that
-/// counter and forwards `Progress` events through `on_event` (which stays
-/// single-threaded, so it needs no `Sync` bound). Global `cancel` and the time
-/// budget are both propagated to the walk via a local cancel flag.
-#[allow(clippy::too_many_arguments)]
-fn measure_dir_streaming(
-    path: &Path,
+/// A directory whose size we still need to measure, plus everything needed to
+/// build its [`CleanupItem`] once the size is known. Collected up front so all
+/// directories can be sized together in one shared work-stealing pool (see
+/// [`size_dirs_with_progress`]) instead of one-at-a-time — which is what
+/// prevents one giant folder (e.g. the Hugging Face cache) from blocking the
+/// whole scan.
+struct PendingDir {
+    path: PathBuf,
+    disp: String,
+    rule_id: String,
+    label: String,
+    category: Category,
+    tier: SafetyTier,
+    regenerates: bool,
+    note: String,
+    selected_by_default: bool,
+    /// Large-folder discovery items get post-sizing filtering (min size,
+    /// overlap dedup, count cap); rule-based items are always surfaced.
+    is_large_folder: bool,
+}
+
+/// Size every directory job in `paths` **concurrently** in one shared
+/// work-stealing pool (`safai_core::size_many`), while this thread polls the
+/// live counters and forwards `Progress` events (keeping `on_event` single-
+/// threaded — no `Sync` bound needed). Bounded by `SIZE_TIME_BUDGET` so the
+/// scan can never hang, even on a pathological tree. Returns per-path sizes in
+/// order.
+fn size_dirs_with_progress(
+    paths: &[PathBuf],
     cancel: &AtomicBool,
-    label: &str,
     base_found: u64,
-    rules_checked: u32,
+    base_checked: u32,
     rules_total: u32,
     on_event: &mut dyn FnMut(ScanEvent),
     warnings: &mut Vec<String>,
-) -> u64 {
+) -> Vec<u64> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
     let progress = AtomicU64::new(0);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
     let local_cancel = AtomicBool::new(false);
     let start = Instant::now();
-    let mut size = 0u64;
+    let total_jobs = paths.len();
+    let mut sizes: Vec<u64> = Vec::new();
 
     std::thread::scope(|s| {
         let progress_ref = &progress;
+        let completed_ref = &completed;
         let local_ref = &local_cancel;
-        let handle = s.spawn(move || safai_core::dir_size_into(path, local_ref, progress_ref));
+        let paths_ref = paths;
+        let handle =
+            s.spawn(move || safai_core::size_many(paths_ref, local_ref, progress_ref, completed_ref));
 
-        // Poll on this (the caller's) thread while the walk runs.
         while !handle.is_finished() {
             std::thread::sleep(SIZE_PROGRESS_INTERVAL);
 
@@ -223,27 +272,36 @@ fn measure_dir_streaming(
             }
 
             let cur = progress_ref.load(Ordering::Relaxed);
+            let done = completed_ref.load(Ordering::Relaxed).min(total_jobs);
+            let remaining = total_jobs - done;
+            let msg = if remaining > 0 {
+                format!("Measuring {remaining} folder{}…", if remaining == 1 { "" } else { "s" })
+            } else {
+                "Finishing up…".to_string()
+            };
             on_event(ScanEvent::Progress {
-                current_path: label.to_string(),
+                current_path: msg,
                 found_bytes: base_found.saturating_add(cur),
-                rules_checked,
+                rules_checked: base_checked + done as u32,
                 rules_total,
             });
         }
 
-        size = handle.join().unwrap_or(0);
+        sizes = handle.join().unwrap_or_default();
     });
 
-    // If we stopped because of the budget (not a user cancel), be honest about
-    // the partial number.
     if start.elapsed() >= SIZE_TIME_BUDGET && !cancel.load(Ordering::Relaxed) {
         warnings.push(format!(
-            "Sizing '{label}' stopped after {}s; its size may be underestimated.",
+            "Sizing stopped after {}s; some folder sizes may be underestimated.",
             SIZE_TIME_BUDGET.as_secs()
         ));
     }
 
-    size
+    // Defensive: guarantee one size per job even if the walk returned early.
+    if sizes.len() != total_jobs {
+        sizes.resize(total_jobs, 0);
+    }
+    sizes
 }
 
 /// Run the rules-based scan.
@@ -296,89 +354,84 @@ pub fn run_scan(
         }
     }
     // Enumerate generic large-folder candidates up front (cheap `read_dir`, no
-    // sizing) so `rules_total` is accurate and the bar advances one notch per
-    // folder as we measure them — no long silent stall at the end.
+    // sizing).
     let candidates: Vec<PathBuf> = if cfg.discover_large_folders {
         enumerate_large_folder_candidates(&cfg.roots, cancel)
     } else {
         Vec::new()
     };
-    let rules_total: u32 =
-        (fixed_rules.len() + pattern_rules.len() + candidates.len()) as u32;
 
     let mut items: Vec<CleanupItem> = Vec::new();
     let mut found_bytes: u64 = 0;
-    let mut rules_checked: u32 = 0;
     let mut warnings: Vec<String> = Vec::new();
 
     // ------------------------------------------------------------------
-    // Fixed-location rules.
+    // Phase 1 — collect work WITHOUT sizing.
+    //   * Fixed-rule *file* locations are measured inline (a single cheap
+    //     metadata call each) and become items immediately.
+    //   * Every directory (fixed-rule dirs, pattern matches, discovery
+    //     candidates) becomes a `PendingDir` job so they can all be sized
+    //     together in one shared work-stealing pool below.
     // ------------------------------------------------------------------
+    let mut dir_jobs: Vec<PendingDir> = Vec::new();
+
+    // Fixed-location rules.
     for rule in &fixed_rules {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-
         for spec in &rule.locations {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
             if let Some(path) = expand(spec.raw) {
-                let is_dir = path.is_dir();
-                let size = if is_dir {
-                    measure_dir_streaming(
-                        &path,
-                        cancel,
-                        rule.label,
-                        found_bytes,
-                        rules_checked,
-                        rules_total,
-                        on_event,
-                        &mut warnings,
-                    )
-                } else {
-                    measure_file(&path)
-                };
                 let disp = display_path(&path);
-                let item = CleanupItem {
-                    id: stable_id(&disp),
-                    rule_id: rule.id.to_string(),
-                    label: rule.label.to_string(),
-                    category: rule.category,
-                    tier: rule.tier,
-                    path: disp.clone(),
-                    size_bytes: size,
-                    regenerates: rule.regenerates,
-                    last_modified_secs: last_modified_secs(&path),
-                    note: rule.note.to_string(),
-                    selected_by_default: rule.tier == SafetyTier::Safe,
-                };
-                found_bytes = found_bytes.saturating_add(size);
-                on_event(ScanEvent::Found { item: item.clone() });
-                items.push(item);
+                if path.is_dir() {
+                    dir_jobs.push(PendingDir {
+                        path: path.clone(),
+                        disp,
+                        rule_id: rule.id.to_string(),
+                        label: rule.label.to_string(),
+                        category: rule.category,
+                        tier: rule.tier,
+                        regenerates: rule.regenerates,
+                        note: rule.note.to_string(),
+                        selected_by_default: rule.tier == SafetyTier::Safe,
+                        is_large_folder: false,
+                    });
+                } else {
+                    // A file (e.g. `state.vscdb`): measure inline.
+                    let size = measure_file(&path);
+                    let item = CleanupItem {
+                        id: stable_id(&disp),
+                        rule_id: rule.id.to_string(),
+                        label: rule.label.to_string(),
+                        category: rule.category,
+                        tier: rule.tier,
+                        path: disp.clone(),
+                        size_bytes: size,
+                        regenerates: rule.regenerates,
+                        last_modified_secs: last_modified_secs(&path),
+                        note: rule.note.to_string(),
+                        selected_by_default: rule.tier == SafetyTier::Safe,
+                    };
+                    found_bytes = found_bytes.saturating_add(size);
+                    on_event(ScanEvent::Found { item: item.clone() });
+                    items.push(item);
+                }
             }
         }
-
-        rules_checked += 1;
-        on_event(ScanEvent::Progress {
-            current_path: rule.label.to_string(),
-            found_bytes,
-            rules_checked,
-            rules_total,
-        });
     }
 
-    // ------------------------------------------------------------------
-    // Pattern rules (single pruned walk over the project scan roots).
-    // ------------------------------------------------------------------
+    // Pattern rules: one pruned walk to discover artifact directories.
     if !pattern_rules.is_empty() && !cfg.project_scan_roots.is_empty() {
-        // Collect matched directories during the walk; measure afterward so we
-        // never call the (potentially heavy) sizing inside the walk callback.
-        let mut matches: Vec<PathBuf> = Vec::new();
+        on_event(ScanEvent::Progress {
+            current_path: "Scanning projects…".to_string(),
+            found_bytes,
+            rules_checked: 0,
+            rules_total: 0,
+        });
 
+        let mut matches: Vec<PathBuf> = Vec::new();
+        let walk_timed_out;
         {
-            // The prune predicate returns true for any directory whose name is
-            // one of the pattern names — we report it but never descend.
             let is_target_name = |name: &str| -> bool {
                 pattern_rules.iter().any(|r| {
                     r.pattern
@@ -387,33 +440,60 @@ pub fn run_scan(
                         .unwrap_or(false)
                 })
             };
-
-            let prune = |path: &Path, ft: &FileType| -> bool {
-                if !ft.is_dir() {
-                    return false;
-                }
+            // Don't descend into artifact dirs (their contents are what we're
+            // measuring, not searching) nor into the heavy/irrelevant folders
+            // in `SKIP_DESCEND_NAMES`. Matched directories are still reported.
+            let prune = |path: &Path| -> bool {
                 match path.file_name().and_then(|n| n.to_str()) {
-                    Some(name) => is_target_name(name),
+                    Some(name) => {
+                        if is_target_name(name) {
+                            return true;
+                        }
+                        let low = name.to_ascii_lowercase();
+                        SKIP_DESCEND_NAMES.contains(&low.as_str())
+                    }
                     None => false,
                 }
             };
-
+            // Throttled progress: `walk_pruned` reports every directory it
+            // sees, so we count them and republish a live Progress event at
+            // most every `SIZE_PROGRESS_INTERVAL`. This is what keeps the UI
+            // moving during discovery instead of appearing frozen.
+            let mut last_emit = Instant::now();
+            let mut dirs_seen: u64 = 0;
             let mut on_dir = |path: &Path| {
+                dirs_seen += 1;
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if is_target_name(name) {
                         matches.push(path.to_path_buf());
                     }
                 }
+                if last_emit.elapsed() >= SIZE_PROGRESS_INTERVAL {
+                    last_emit = Instant::now();
+                    on_event(ScanEvent::Progress {
+                        current_path: format!("Scanning projects… ({dirs_seen} folders)"),
+                        found_bytes,
+                        rules_checked: 0,
+                        rules_total: 0,
+                    });
+                }
             };
+            let opts = safai_core::WalkOptions {
+                max_depth: Some(PROJECT_SCAN_MAX_DEPTH),
+                deadline: Some(Instant::now() + WALK_TIME_BUDGET),
+            };
+            walk_timed_out =
+                safai_core::walk_pruned(&cfg.project_scan_roots, cancel, opts, &prune, &mut on_dir);
+        }
 
-            safai_core::walk_pruned(&cfg.project_scan_roots, cancel, &prune, &mut on_dir);
+        if walk_timed_out {
+            warnings.push(format!(
+                "Project scan stopped after {}s; some artifact folders may not be listed.",
+                WALK_TIME_BUDGET.as_secs()
+            ));
         }
 
         for matched in matches {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
-            // Resolve which pattern rule owns this directory name.
             let name = match matched.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n,
                 None => continue,
@@ -428,123 +508,117 @@ pub fn run_scan(
                 Some(r) => r,
                 None => continue,
             };
-
             let disp = display_path(&matched);
-            let size = measure_dir_streaming(
-                &matched,
-                cancel,
-                &disp,
-                found_bytes,
-                rules_checked,
-                rules_total,
-                on_event,
-                &mut warnings,
-            );
-            let item = CleanupItem {
-                id: stable_id(&disp),
+            dir_jobs.push(PendingDir {
+                path: matched.clone(),
+                disp,
                 rule_id: rule.id.to_string(),
                 label: rule.label.to_string(),
                 category: rule.category,
                 tier: rule.tier,
-                path: disp.clone(),
-                size_bytes: size,
                 regenerates: rule.regenerates,
-                last_modified_secs: last_modified_secs(&matched),
                 note: rule.note.to_string(),
-                // Pattern (build artifact) targets are Review-tier and never
-                // pre-selected.
                 selected_by_default: rule.tier == SafetyTier::Safe,
-            };
-            found_bytes = found_bytes.saturating_add(size);
-            on_event(ScanEvent::Found { item: item.clone() });
-            items.push(item);
+                is_large_folder: false,
+            });
         }
+    }
 
-        rules_checked += pattern_rules.len() as u32;
-        on_event(ScanEvent::Progress {
-            current_path: "Build artifacts".to_string(),
-            found_bytes,
-            rules_checked,
-            rules_total,
+    // Large-folder discovery candidates.
+    let candidate_start = dir_jobs.len();
+    for cand in &candidates {
+        let disp = display_path(cand);
+        let name = cand
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("folder")
+            .to_string();
+        dir_jobs.push(PendingDir {
+            path: cand.clone(),
+            disp,
+            rule_id: "large-folder".to_string(),
+            label: name,
+            category: Category::Other,
+            tier: SafetyTier::Caution,
+            regenerates: false,
+            note: "A large folder that no specific rule matched. It may hold \
+                   important data — use Reveal to inspect it before removing. \
+                   Never pre-selected."
+                .to_string(),
+            selected_by_default: false,
+            is_large_folder: true,
         });
     }
 
     // ------------------------------------------------------------------
-    // Generic large-folder discovery (software-agnostic; Caution tier).
-    // Streams a Progress event *before* sizing each candidate so the UI shows
-    // exactly which folder is being measured and the bar advances per folder.
+    // Phase 2 — size ALL directory jobs together in one shared work-stealing
+    // pool. Every worker steals across all folders, so a single huge folder
+    // (Hugging Face cache, a massive node_modules, …) is sized with full
+    // parallelism and can never block the folders behind it.
     // ------------------------------------------------------------------
-    if !candidates.is_empty() {
-        // Paths already attributed to a specific rule — don't re-size or
-        // double-count them (e.g. a cache folder inside a swept parent).
-        let existing_lower: Vec<String> = items
-            .iter()
-            .map(|it| it.path.trim_end_matches('/').to_lowercase())
-            .collect();
-        let mut emitted = 0usize;
+    let file_items = items.len() as u32;
+    let rules_total: u32 = file_items + dir_jobs.len() as u32;
+    let job_paths: Vec<PathBuf> = dir_jobs.iter().map(|j| j.path.clone()).collect();
 
-        for cand in &candidates {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
-            let disp = display_path(cand);
+    let sizes = size_dirs_with_progress(
+        &job_paths,
+        cancel,
+        found_bytes,
+        file_items,
+        rules_total,
+        on_event,
+        &mut warnings,
+    );
 
-            // Advance the bar and show the folder BEFORE the (slow) sizing, so
-            // the user always sees what Safai is currently working on.
-            rules_checked += 1;
-            on_event(ScanEvent::Progress {
-                current_path: disp.clone(),
-                found_bytes,
-                rules_checked,
-                rules_total,
-            });
+    // ------------------------------------------------------------------
+    // Phase 3 — build items from the measured sizes and emit Found events.
+    // Rule-based dirs are always surfaced; large-folder candidates get the
+    // min-size / overlap / count-cap filtering applied here.
+    // ------------------------------------------------------------------
+    // Paths already attributed to a specific rule (for large-folder overlap).
+    let mut existing_lower: Vec<String> = items
+        .iter()
+        .map(|it| it.path.trim_end_matches('/').to_lowercase())
+        .collect();
+    // Also count the non-candidate dir jobs as "existing" for overlap.
+    for job in dir_jobs.iter().take(candidate_start) {
+        existing_lower.push(job.disp.trim_end_matches('/').to_lowercase());
+    }
 
-            let low = disp.trim_end_matches('/').to_lowercase();
+    let mut emitted_large = 0usize;
+    for (i, job) in dir_jobs.iter().enumerate() {
+        let size = sizes.get(i).copied().unwrap_or(0);
+
+        if job.is_large_folder {
+            let low = job.disp.trim_end_matches('/').to_lowercase();
             if path_overlaps(&low, &existing_lower) {
                 continue;
             }
-            // Cap how many large folders we surface (keeps the list focused);
-            // we still advance progress through the rest.
-            if emitted >= MAX_LARGE_FOLDERS {
+            if emitted_large >= MAX_LARGE_FOLDERS {
                 continue;
             }
-
-            let size = measure_dir_streaming(
-                cand,
-                cancel,
-                &disp,
-                found_bytes,
-                rules_checked,
-                rules_total,
-                on_event,
-                &mut warnings,
-            );
             if size < MIN_LARGE_FOLDER_BYTES {
                 continue;
             }
-
-            let name = cand.file_name().and_then(|n| n.to_str()).unwrap_or("folder");
-            let item = CleanupItem {
-                id: stable_id(&disp),
-                rule_id: "large-folder".to_string(),
-                label: name.to_string(),
-                category: Category::Other,
-                tier: SafetyTier::Caution,
-                path: disp.clone(),
-                size_bytes: size,
-                regenerates: false,
-                last_modified_secs: last_modified_secs(cand),
-                note: "A large folder that no specific rule matched. It may hold \
-                       important data — use Reveal to inspect it before removing. \
-                       Never pre-selected."
-                    .to_string(),
-                selected_by_default: false,
-            };
-            found_bytes = found_bytes.saturating_add(size);
-            emitted += 1;
-            on_event(ScanEvent::Found { item: item.clone() });
-            items.push(item);
+            emitted_large += 1;
         }
+
+        let item = CleanupItem {
+            id: stable_id(&job.disp),
+            rule_id: job.rule_id.clone(),
+            label: job.label.clone(),
+            category: job.category,
+            tier: job.tier,
+            path: job.disp.clone(),
+            size_bytes: size,
+            regenerates: job.regenerates,
+            last_modified_secs: last_modified_secs(&job.path),
+            note: job.note.clone(),
+            selected_by_default: job.selected_by_default,
+        };
+        found_bytes = found_bytes.saturating_add(size);
+        on_event(ScanEvent::Found { item: item.clone() });
+        items.push(item);
     }
 
     if cancel.load(Ordering::Relaxed) {

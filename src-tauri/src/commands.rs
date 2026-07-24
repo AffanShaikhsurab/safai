@@ -81,9 +81,15 @@ pub async fn scan(
     } else {
         roots.iter().map(PathBuf::from).collect()
     };
+    // Pattern rules hunt for project artifacts (`node_modules`, `target`, …),
+    // which live in dev folders — NOT in the whole profile + AppData. Using a
+    // targeted, bounded set of project roots (plus the depth limit + time
+    // budget inside `run_scan`) is what stops the scan from crawling all of
+    // AppData and appearing to hang.
+    let project_roots = safai_rules::project_scan_roots();
     let cfg = ScanConfig {
-        roots: resolved.clone(),
-        project_scan_roots: resolved,
+        roots: resolved,
+        project_scan_roots: project_roots,
         discover_large_folders: true,
     };
 
