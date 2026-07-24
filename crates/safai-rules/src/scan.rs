@@ -268,6 +268,13 @@ fn size_dirs_with_progress(
     // Jobs already handed to `make_item`, so each is emitted exactly once.
     let mut handled: Vec<bool> = vec![false; total_jobs];
 
+    // Running total of bytes for folders that were actually *surfaced* (passed
+    // `make_item`). The live "Reclaimable" figure is `base_found + surfaced`,
+    // so it tracks the real, de-duplicated total and matches the review page —
+    // instead of the raw sum of every byte touched (which over-counts folders
+    // that get filtered out by the size/cap rules).
+    let mut surfaced: u64 = 0;
+
     std::thread::scope(|s| {
         let progress_ref = &progress;
         let completed_ref = &completed;
@@ -295,18 +302,19 @@ fn size_dirs_with_progress(
             }
 
             // Emit Found for every folder that finished sizing since the last
-            // poll, so the item counter advances live.
+            // poll, so the item counter advances live and the reclaimable
+            // total climbs by only the surfaced (de-duplicated) bytes.
             for idx in 0..total_jobs {
                 if !handled[idx] && per_job_done[idx].load(Ordering::Acquire) {
                     handled[idx] = true;
                     let size = per_job_total[idx].load(Ordering::Relaxed);
                     if let Some(item) = make_item(idx, size) {
+                        surfaced = surfaced.saturating_add(item.size_bytes);
                         on_event(ScanEvent::Found { item });
                     }
                 }
             }
 
-            let cur = progress_ref.load(Ordering::Relaxed);
             let done = completed_ref.load(Ordering::Relaxed).min(total_jobs);
             let remaining = total_jobs - done;
             let msg = if remaining > 0 {
@@ -316,7 +324,7 @@ fn size_dirs_with_progress(
             };
             on_event(ScanEvent::Progress {
                 current_path: msg,
-                found_bytes: base_found.saturating_add(cur),
+                found_bytes: base_found.saturating_add(surfaced),
                 rules_checked: base_checked + done as u32,
                 rules_total,
             });
@@ -332,6 +340,7 @@ fn size_dirs_with_progress(
             handled[idx] = true;
             let size = per_job_total[idx].load(Ordering::Relaxed);
             if let Some(item) = make_item(idx, size) {
+                surfaced = surfaced.saturating_add(item.size_bytes);
                 on_event(ScanEvent::Found { item });
             }
         }
@@ -566,9 +575,37 @@ pub fn run_scan(
     }
 
     // Large-folder discovery candidates.
-    let candidate_start = dir_jobs.len();
+    //
+    // Dedup BEFORE sizing. A generic large-folder candidate that overlaps a
+    // path already attributed to a specific rule (the candidate is an ancestor
+    // of a detected `node_modules`, or the parent of a known cache, etc.) must
+    // not be sized at all — otherwise its bytes are counted twice: once for the
+    // parent candidate and once for the rule match nested inside it. That
+    // double-counting is exactly what made the live "Reclaimable" total balloon
+    // far above the real figure shown on the review page. Filtering here means
+    // those overlapping folders are never sized (so the scan is faster too) and
+    // never counted.
+    //
+    // `existing_lower` holds every rule-attributed path (fixed-rule files and
+    // dirs + pattern matches) in normalized, lowercased form. At this point
+    // `dir_jobs` contains only rule dirs (candidates are added below), so it is
+    // the complete set of rule paths.
+    let mut existing_lower: Vec<String> = items
+        .iter()
+        .map(|it| it.path.trim_end_matches('/').to_lowercase())
+        .collect();
+    for job in &dir_jobs {
+        existing_lower.push(job.disp.trim_end_matches('/').to_lowercase());
+    }
+
     for cand in &candidates {
         let disp = display_path(cand);
+        let low = disp.trim_end_matches('/').to_lowercase();
+        // Skip candidates that overlap (are an ancestor/descendant of) a path a
+        // specific rule already owns — dedup before we spend time sizing it.
+        if path_overlaps(&low, &existing_lower) {
+            continue;
+        }
         let name = cand
             .file_name()
             .and_then(|n| n.to_str())
@@ -607,31 +644,17 @@ pub fn run_scan(
     let rules_total: u32 = file_items + dir_jobs.len() as u32;
     let job_paths: Vec<PathBuf> = dir_jobs.iter().map(|j| j.path.clone()).collect();
 
-    // Paths already attributed to a specific rule (for large-folder overlap).
-    // Built before sizing so the overlap check is order-independent.
-    let mut existing_lower: Vec<String> = items
-        .iter()
-        .map(|it| it.path.trim_end_matches('/').to_lowercase())
-        .collect();
-    // Also count the non-candidate dir jobs as "existing" for overlap.
-    for job in dir_jobs.iter().take(candidate_start) {
-        existing_lower.push(job.disp.trim_end_matches('/').to_lowercase());
-    }
-
     {
         let mut emitted_large = 0usize;
         // Build a `CleanupItem` for job `idx` once its `size` is known. Returns
-        // `None` when a large-folder candidate is filtered out (overlap, count
-        // cap, or below the min-size threshold); rule-based dirs always pass.
+        // `None` when a large-folder candidate is filtered out by the count cap
+        // or the min-size threshold; rule-based dirs always pass. (Overlap dedup
+        // already happened before sizing, so there is no overlap check here.)
         // Also records the item into `items` for final aggregation.
         let mut make_item = |idx: usize, size: u64| -> Option<CleanupItem> {
             let job = &dir_jobs[idx];
 
             if job.is_large_folder {
-                let low = job.disp.trim_end_matches('/').to_lowercase();
-                if path_overlaps(&low, &existing_lower) {
-                    return None;
-                }
                 if emitted_large >= MAX_LARGE_FOLDERS {
                     return None;
                 }
