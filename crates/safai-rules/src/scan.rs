@@ -11,9 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::detect::{detect_tools, display_path, expand};
-use crate::model::{
-    Category, CategoryGroup, CleanupItem, ScanEvent, ScanReport, SafetyTier,
-};
+use crate::model::{Category, CategoryGroup, CleanupItem, SafetyTier, ScanEvent, ScanReport};
 use crate::rules::{all_rules, CleanupRule};
 
 /// Configuration for a scan run.
@@ -162,7 +160,10 @@ pub fn stable_id(path: &str) -> String {
 fn last_modified_secs(path: &Path) -> Option<u64> {
     let md = std::fs::metadata(path).ok()?;
     let modified = md.modified().ok()?;
-    modified.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
+    modified
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 /// How often the streaming sizing loop republishes progress to the UI.
@@ -318,7 +319,10 @@ fn size_dirs_with_progress(
             let done = completed_ref.load(Ordering::Relaxed).min(total_jobs);
             let remaining = total_jobs - done;
             let msg = if remaining > 0 {
-                format!("Measuring {remaining} folder{}…", if remaining == 1 { "" } else { "s" })
+                format!(
+                    "Measuring {remaining} folder{}…",
+                    if remaining == 1 { "" } else { "s" }
+                )
             } else {
                 "Finishing up…".to_string()
             };
@@ -486,7 +490,7 @@ pub fn run_scan(
                 pattern_rules.iter().any(|r| {
                     r.pattern
                         .as_ref()
-                        .map(|p| p.names.iter().any(|n| *n == name))
+                        .map(|p| p.names.contains(&name))
                         .unwrap_or(false)
                 })
             };
@@ -551,7 +555,7 @@ pub fn run_scan(
             let rule = pattern_rules.iter().find(|r| {
                 r.pattern
                     .as_ref()
-                    .map(|p| p.names.iter().any(|n| *n == name))
+                    .map(|p| p.names.contains(&name))
                     .unwrap_or(false)
             });
             let rule = match rule {

@@ -7,7 +7,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rust": "cargo test --workspace",
+    "lint:rust": "cargo clippy --workspace --all-targets -- -D warnings",
+    "fmt:check": "cargo fmt --all -- --check",
+    "check": "npm run typecheck && npm run test && npm run build && npm run fmt:check && npm run lint:rust && npm run test:rust"
   },
   "dependencies": {
     "@solidjs/router": "0.15.3",
@@ -26,6 +33,7 @@
     "tailwindcss": "4.0.9",
     "typescript": "5.7.3",
     "vite": "6.2.0",
-    "vite-plugin-solid": "2.11.6"
+    "vite-plugin-solid": "2.11.6",
+    "vitest": "3.2.7"
   }
 }

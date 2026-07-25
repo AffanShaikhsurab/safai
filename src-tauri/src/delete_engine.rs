@@ -93,11 +93,7 @@ pub fn preflight_check(path: &Path) -> Result<(), String> {
     // On Windows: try opening the root for DELETE access. If this fails,
     // the directory/file is likely locked.
     #[cfg(windows)]
-    {
-        if let Err(reason) = can_open_for_delete(path) {
-            return Err(reason);
-        }
-    }
+    can_open_for_delete(path)?;
 
     Ok(())
 }
@@ -185,6 +181,14 @@ fn remove_file_with_retry(path: &Path) -> io::Result<()> {
                             if let Ok(meta) = fs::metadata(path) {
                                 let mut perms = meta.permissions();
                                 if perms.readonly() {
+                                    // clippy::permissions_set_readonly_false
+                                    // warns because on Unix this grants
+                                    // world-writable permissions. Safai is
+                                    // Windows-first and this path is reached
+                                    // only after ERROR_ACCESS_DENIED, where
+                                    // clearing the read-only attribute is
+                                    // exactly the intended fix.
+                                    #[allow(clippy::permissions_set_readonly_false)]
                                     perms.set_readonly(false);
                                     let _ = fs::set_permissions(path, perms);
                                     continue; // Retry immediately.
@@ -344,10 +348,16 @@ pub fn friendly_error_message(code: i32, path: &str) -> String {
     match code {
         2 => format!("'{}' not found (already deleted)", short_name(path)),
         3 => format!("path not found: '{}'", short_name(path)),
-        5 => format!("access denied: '{}' may be read-only or in use", short_name(path)),
+        5 => format!(
+            "access denied: '{}' may be read-only or in use",
+            short_name(path)
+        ),
         32 => format!("'{}' is being used by another program", short_name(path)),
         33 => format!("'{}' is locked by another program", short_name(path)),
-        145 => format!("'{}' is not empty (files appeared during deletion)", short_name(path)),
+        145 => format!(
+            "'{}' is not empty (files appeared during deletion)",
+            short_name(path)
+        ),
         206 => format!("path too long: '{}'", short_name(path)),
         _ => format!("failed to delete '{}': error {}", short_name(path), code),
     }

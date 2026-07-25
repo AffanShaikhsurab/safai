@@ -13,9 +13,7 @@ pub mod rules;
 pub mod scan;
 
 // Re-export the model data contracts (§3.1–§3.3).
-pub use model::{
-    Category, CategoryGroup, CleanupItem, SafetyTier, ScanEvent, ScanReport,
-};
+pub use model::{Category, CategoryGroup, CleanupItem, SafetyTier, ScanEvent, ScanReport};
 
 // Re-export the primary entry points used by WS3.
 pub use detect::{default_roots, detect_tools, project_scan_roots};

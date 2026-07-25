@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 
@@ -15,5 +16,18 @@ export default defineConfig({
   build: {
     target: "esnext",
     outDir: "dist",
+  },
+  test: {
+    // Unit tests cover pure logic (`src/lib/*.test.ts`). They run in `node`
+    // rather than a DOM: nothing under test touches the document, and keeping
+    // it that way is a useful pressure to leave logic extractable instead of
+    // buried in components.
+    environment: "node",
+    include: ["src/**/*.test.ts"],
+    // The dev server and the Rust target tree are not test sources.
+    exclude: ["node_modules/**", "dist/**", "target/**", "src-tauri/**"],
+    // Solid ships browser + server builds; tests import plain modules, so
+    // resolve the standard (browser) condition to match production behaviour.
+    server: { deps: { inline: [/solid-js/] } },
   },
 });

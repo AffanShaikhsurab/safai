@@ -1,4 +1,4 @@
-import { type Component, For, type JSX } from "solid-js";
+import { type Component, For, Show, type JSX } from "solid-js";
 import { appStore, type View } from "../state/store";
 import { formatBytes } from "../lib/format";
 import logoUrl from "../assets/logo.png";
@@ -37,6 +37,12 @@ const SettingsIcon = icon(
     <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
   </>,
 );
+const AutomationIcon = icon(
+  <>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 8v4l3 2" />
+  </>,
+);
 
 interface NavItem {
   id: View;
@@ -47,6 +53,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: "dashboard", label: "Dashboard", Icon: DashboardIcon },
   { id: "clean", label: "Clean", Icon: CleanIcon },
+  { id: "automation", label: "Automation", Icon: AutomationIcon },
   { id: "settings", label: "Settings", Icon: SettingsIcon },
 ];
 
@@ -87,6 +94,15 @@ const Sidebar: Component = () => {
             >
               <item.Icon />
               {item.label}
+              {/* A quiet pulse while automation is mid-run, so the user can
+                  tell something is happening without a modal or a toast. */}
+              <Show
+                when={
+                  item.id === "automation" && appStore.state.automation?.running
+                }
+              >
+                <span class="nav-pulse" aria-label="Automation is running" />
+              </Show>
             </button>
           )}
         </For>
@@ -100,7 +116,7 @@ const Sidebar: Component = () => {
         <div class="v">
           {formatBytes(appStore.state.stats.lifetimeReclaimedBytes)}
         </div>
-        <div class="ver">Safai v0.1.0</div>
+        <div class="ver">Safai v0.1.2</div>
       </div>
     </aside>
   );

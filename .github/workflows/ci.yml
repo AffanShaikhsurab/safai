@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  # Lets maintainers re-run the bench without pushing a commit.
+  workflow_dispatch:
+
+# A new push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI has no warm incremental cache to benefit from, and disabling it produces
+  # smaller, faster-to-restore build artifacts.
+  CARGO_INCREMENTAL: 0
+  # Deliberately no global `RUSTFLAGS: -D warnings`: it applies to dependency
+  # builds too, so an upstream crate's warning would fail our CI. Warnings are
+  # denied for our own code via the clippy invocation below.
+
+jobs:
+  frontend:
+    name: Frontend (type-check, tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `npm ci`, not `install`: the lockfile is authoritative, so a stale one
+      # fails the build instead of being silently rewritten.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
+
+  rust:
+    name: Rust (fmt, clippy, tests)
+    # Windows on purpose: Safai is Windows-first, and the scheduler compiles
+    # real Win32 calls (GetLastInputInfo, EcoQoS, GetDiskFreeSpaceExW) behind
+    # `#[cfg(windows)]`. Running the bench anywhere else would skip that code.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Caches ~/.cargo and ./target keyed on the lockfile.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      # `--all-targets` so tests and examples are linted too, not just the lib.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Covers `safai` as well as the two crates — the scheduler's decision
+      # matrix and autopilot policy tests live in the `safai` package.
+      - name: Tests
+        run: cargo test --workspace
+
+  bundle:
+    name: Tauri bundle (release)
+    # The real integration check: proves the app links and packages with the
+    # tray-icon feature and every plugin wired up. Slow, so it's kept off the
+    # per-push path and runs on PRs and manual dispatch.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build bundle
+        run: npm run tauri -- build
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: safai-windows-installers
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
+          retention-days: 14

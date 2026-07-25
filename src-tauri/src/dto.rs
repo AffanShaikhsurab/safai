@@ -88,3 +88,19 @@ pub struct ToolInfo {
     pub label: String,
     pub detected: bool,
 }
+
+/// One entry of the cleanup rule table, exposed so the Automation screen can
+/// offer a per-rule autopilot opt-in rather than a category blanket.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleInfo {
+    pub id: String,
+    pub label: String,
+    pub category: safai_rules::Category,
+    pub tier: SafetyTier,
+    pub regenerates: bool,
+    pub note: String,
+    /// Discovered by directory name (`node_modules`, `target`, …) rather than a
+    /// fixed known path.
+    pub pattern_based: bool,
+}

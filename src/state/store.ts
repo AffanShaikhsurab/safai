@@ -3,23 +3,39 @@
 // simpler than context. It's created inside `createRoot` so the `createMemo`
 // selectors have a stable owner and don't leak.
 
-import { createMemo, createRoot } from "solid-js";
+import { createEffect, createMemo, createRoot, on } from "solid-js";
 import { createStore, produce } from "solid-js/store";
+import { listen } from "@tauri-apps/api/event";
 import type {
+  AutomationProgress,
+  AutomationStatus,
   Category,
   CleanupItem,
   DeleteEvent,
   DriveInfo,
+  RuleInfo,
   SafetyTier,
   ScanEvent,
   ScanReport,
+  ScheduleConfig,
   ToolInfo,
 } from "../lib/types";
 import { DEFAULT_STATS, saveStats, type LifetimeStats } from "../lib/stats";
 import { formatBytes } from "../lib/format";
 import { notify } from "../lib/notify";
-import { scan, deleteItems, driveInfo } from "../lib/tauri";
+import {
+  automationStatus,
+  cleanupRules,
+  deleteItems,
+  driveInfo,
+  runAutomationNow,
+  scan,
+  setAutomationConfig,
+  setUiEngaged,
+  stopAutomation,
+} from "../lib/tauri";
 import { loadLastReport, saveLastReport } from "../lib/report";
+import { isUiEngaged, shouldParkAtResults } from "../lib/automation";
 import {
   applyThemeClass,
   DEFAULT_SCAN_PREFS,
@@ -33,7 +49,9 @@ import {
 export type Phase = "welcome" | "scanning" | "results" | "cleaning" | "done";
 
 /** Top-level navigation sections (sidebar). */
-export type View = "dashboard" | "clean" | "settings";
+export type View = "dashboard" | "clean" | "automation" | "settings";
+
+
 
 /** A single item that couldn't be removed, with the reason why. */
 export interface SkippedItem {
@@ -80,6 +98,14 @@ export interface AppState {
    * Dashboard and back must not reset it to 0.
    */
   scanStartedAt: number;
+  /**
+   * Backend automation status. `null` until the first hydrate; the Automation
+   * screen renders a loading state rather than guessing at defaults, since the
+   * real config lives in Rust.
+   */
+  automation: AutomationStatus | null;
+  /** The cleanup rule table, for the autopilot allow-list. Lazy-loaded. */
+  rules: RuleInfo[];
 }
 
 function emptyProgress(): Progress {
@@ -113,7 +139,19 @@ function createAppStore() {
     deepScan: DEFAULT_SCAN_PREFS.deepScan,
     toRecycleBin: DEFAULT_SCAN_PREFS.toRecycleBin,
     scanStartedAt: 0,
+    automation: null,
+    rules: [],
   });
+
+  // Keep the backend's view of "the user is busy" in sync with the flow, so the
+  // scheduler defers instead of invalidating a live selection.
+  // Best-effort: a failed IPC call here must not break navigation.
+  createEffect(
+    on(
+      () => isUiEngaged(state.phase, state.view),
+      (engaged) => void setUiEngaged(engaged).catch(() => {}),
+    ),
+  );
 
   // ---- Derived index of every item across all groups (for byte math). ----
   const allItems = createMemo<CleanupItem[]>(() => {
@@ -508,6 +546,134 @@ function createAppStore() {
     );
   }
 
+  // -----------------------------------------------------------------------
+  // Automation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Adopt a report produced by a background automation run.
+   *
+   * Never changes `view`: automation runs while the user is doing something
+   * else, and yanking them onto another screen would be hostile. It does park
+   * the flow at `results` when they aren't mid-task, so opening Clean lands
+   * straight on the review list with everything ready to free — one click from
+   * a notification to reclaimed space.
+   */
+  function applyAutomationReport(report: ScanReport) {
+    for (const group of report.groups) {
+      group.items.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    }
+    report.groups.sort((a, b) => b.totalBytes - a.totalBytes);
+
+    setState(
+      produce((s) => {
+        s.report = report;
+        // Selection is rebuilt from scratch: the previous report's ids no
+        // longer resolve in the backend, so keeping stale ticks would only
+        // produce "item not found in last scan" skips.
+        s.selected = {};
+        for (const group of report.groups) {
+          for (const item of group.items) {
+            s.selected[item.id] = item.selectedByDefault;
+          }
+        }
+        if (shouldParkAtResults(s.phase, report)) {
+          s.phase = "results";
+        }
+      }),
+    );
+
+    const itemCount = report.groups.reduce((n, g) => n + g.items.length, 0);
+    recordScan(report.totalReclaimableBytes, itemCount);
+    void saveLastReport(report);
+  }
+
+  function setAutomation(status: AutomationStatus) {
+    setState("automation", status);
+  }
+
+  /** Merge the high-frequency progress payload into the cached status. */
+  function applyAutomationProgress(progress: AutomationProgress) {
+    setState(
+      produce((s) => {
+        if (!s.automation) return;
+        s.automation.progress = progress;
+        s.automation.phase = progress.phase;
+        s.automation.running = progress.phase !== "idle";
+      }),
+    );
+  }
+
+  /** Fetch the current automation status (and the rule table, once). */
+  async function hydrateAutomation() {
+    try {
+      setAutomation(await automationStatus());
+    } catch (e) {
+      console.error("automation status failed", e);
+    }
+    if (state.rules.length === 0) {
+      try {
+        setState("rules", await cleanupRules());
+      } catch {
+        // Non-fatal: the allow-list UI degrades to category-level control.
+      }
+    }
+  }
+
+  /**
+   * Subscribe to backend automation events. Returns an unsubscribe function;
+   * call it if the app ever tears the store down.
+   */
+  async function initAutomationListeners(): Promise<() => void> {
+    const unlisteners = await Promise.all([
+      listen<AutomationStatus>("automation://status", (e) =>
+        setAutomation(e.payload),
+      ),
+      listen<AutomationProgress>("automation://progress", (e) =>
+        applyAutomationProgress(e.payload),
+      ),
+      listen<ScanReport>("automation://report", (e) =>
+        applyAutomationReport(e.payload),
+      ),
+    ]);
+    return () => unlisteners.forEach((un) => un());
+  }
+
+  /**
+   * Patch the automation config. The backend sanitizes and returns the result,
+   * so the store adopts the response rather than the optimistic patch — that
+   * way a clamped value or a refused tier shows up in the UI immediately.
+   */
+  async function patchAutomation(patch: Partial<ScheduleConfig>) {
+    const current = state.automation?.config;
+    if (!current) return;
+    try {
+      setAutomation(await setAutomationConfig({ ...current, ...patch }));
+    } catch (e) {
+      console.error("saving automation config failed", e);
+      // Re-read so the UI reflects what the backend actually holds.
+      void hydrateAutomation();
+    }
+  }
+
+  /** Kick off an automation run immediately. */
+  async function triggerAutomationRun() {
+    try {
+      await runAutomationNow();
+    } catch (e) {
+      console.error("run automation failed", e);
+    }
+  }
+
+  /** Ask the running automation run to stop. */
+  async function haltAutomationRun() {
+    try {
+      await stopAutomation();
+    } catch (e) {
+      console.error("stop automation failed", e);
+    }
+  }
+
   return {
     state,
     // scan lifecycle
@@ -540,6 +706,12 @@ function createAppStore() {
     setDestination,
     recordScan,
     recordCleanup,
+    // automation
+    hydrateAutomation,
+    initAutomationListeners,
+    patchAutomation,
+    triggerAutomationRun,
+    haltAutomationRun,
     // misc
     setPhase,
     reset,

@@ -12,6 +12,9 @@ Safai finds the caches, build artifacts, and junk your tools quietly pile up,
 tells you what's safe to remove, and cleans it up to the Recycle Bin in a couple
 of clicks. No guesswork. No `rm -rf` regrets.
 
+Built in **Rust** — it reads 5.3 million files in **19 seconds**,
+[**≈35× faster**](#-performance) than PowerShell's `Get-ChildItem`.
+
 [![Download for Windows](https://img.shields.io/badge/Download-Windows%20.exe-2f5fad?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/AffanShaikhsurab/safai/releases/latest)
 
 </div>
@@ -51,6 +54,11 @@ sorted picture of what you can get back:
   review exactly what's there so far.
 - **🔔 Get notified** — kick off a scan or cleanup and walk away; Safai pings you
   when it's done.
+- **🤖 Or never think about it again** — turn on **Automation** and Safai keeps
+  watch from the tray: run daily/weekly, or whenever your drive crosses a fullness
+  threshold you pick. Choose *scan and tell me*, or pre-approve specific safe
+  caches and let it reclaim them on its own. It waits until you're idle and on
+  power, and runs at background I/O priority so you never feel it.
 - **🌌 Made to look at** — a calm, modern UI with two themes: **Nebula** (night
   sky, stars & comets) and **Void** (charcoal dark with hairline dividers).
 
@@ -62,6 +70,71 @@ sorted picture of what you can get back:
   and more; plus generic large-folder discovery for everything else.
 - **Stays out of your way** — scan, get notified, review the biggest wins first
   (results are sorted largest → smallest), clean, done.
+
+---
+
+## ⚡ Performance
+
+The scanner is written in **Rust**, and the whole point of that choice is this
+part: measuring a disk means touching millions of files, and anything slower than
+"a few seconds" turns into an app nobody opens twice.
+
+Scanning `C:\Users\<you>` — **5,333,449 files, 285.9 GiB**:
+
+| Tool | Time | Files/sec |
+| --- | --- | --- |
+| `Get-ChildItem -Recurse` (PowerShell) | 676.4 s | ~7,900 |
+| **Safai** | **19.1 s** | **~279,000** |
+
+### ≈35× faster than the tool Windows gives you
+
+Both walked the same tree and agreed on the total to within **0.0025%** (~7.6 MB
+out of 286 GB), so that gap is traversal speed, not one tool doing less work.
+
+<details>
+<summary><b>Methodology, and how to reproduce it</b></summary>
+
+```powershell
+./benchmarks/run-benchmark.ps1 -SkipDir
+```
+
+Reference machine: Windows 11 (build 26200), Intel Core i5-13420H (8C/12T),
+31.7 GB RAM, NVMe SSD, NTFS, rustc 1.97.1 release build.
+
+- Both contenders answer one identical question: *what is the total byte size of
+  this tree?* Safai's side calls `safai_core::measure::dir_size` — the real
+  function the app uses during a scan, not a benchmark-only rewrite.
+- Every contender gets an untimed **warm-up pass** first, so nobody pays for
+  populating the NTFS metadata cache while the others don't.
+- Safai's figure is the **best of 3** timed runs (median 20.9 s, mean 20.6 s).
+  The PowerShell figure is a single warm pass — at ~11 minutes each, repeating it
+  wasn't worth the wall clock.
+- `cmd /c dir /s` isn't listed: it didn't finish two passes over this tree in
+  25 minutes. It's clearly slower than PowerShell here, but "we stopped waiting"
+  isn't a measurement, so it isn't presented as one.
+- **Numbers are machine-specific.** Run the script on yours.
+
+Full write-up, including why the totals differ slightly, in
+**[benchmarks/README.md](./benchmarks/README.md)**.
+
+</details>
+
+### Where the speed comes from
+
+- **Parallel work-stealing traversal** across every core. Directory trees are
+  wildly unbalanced, so splitting "one thread per folder" leaves most threads
+  idle behind the one huge folder. Work stealing means every thread piles onto
+  whatever is left.
+- **One syscall per entry** — sizes come from the directory listing itself, not a
+  follow-up `metadata()` call per file. Across 5.3M files that halves the syscall
+  count.
+- **Pruning** — the walker never descends into a directory it's already treating
+  as a single unit, so sizing `node_modules` doesn't mean visiting its contents
+  twice.
+- **No object churn** — `Get-ChildItem` allocates a full `FileInfo` per file. At
+  this scale, that allocation and GC pressure *is* the runtime.
+- **Background I/O priority** for scheduled scans, so automatic maintenance never
+  competes with what you're actually doing.
 
 ---
 

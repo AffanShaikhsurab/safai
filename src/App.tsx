@@ -6,6 +6,7 @@ import SpaceBackground from "./components/SpaceBackground";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import Dashboard from "./screens/Dashboard";
+import Automation from "./screens/Automation";
 import Settings from "./screens/Settings";
 import Welcome from "./screens/Welcome";
 import Scanning from "./screens/Scanning";
@@ -23,6 +24,10 @@ const App: Component = () => {
     void appStore.hydrateLastReport();
     // Ask for notification permission up front so completion pings work later.
     void ensureNotifyPermission();
+    // Automation: subscribe before hydrating, so a run that starts during
+    // startup can't slip through the gap between the two.
+    void appStore.initAutomationListeners();
+    void appStore.hydrateAutomation();
   });
 
   return (
@@ -36,6 +41,9 @@ const App: Component = () => {
             <Switch fallback={<Dashboard />}>
               <Match when={appStore.state.view === "dashboard"}>
                 <Dashboard />
+              </Match>
+              <Match when={appStore.state.view === "automation"}>
+                <Automation />
               </Match>
               <Match when={appStore.state.view === "settings"}>
                 <Settings />
