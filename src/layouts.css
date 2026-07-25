@@ -1,0 +1,1005 @@
+/* ===========================================================================
+   LAYOUT FAMILIES
+
+   Two structural philosophies, selected by `layoutFamily(theme)`:
+
+     .sky-*    Nebula + Void. Centred ~780px column, hairline rules, no card
+               boxes, pixel display type. Both themes share this exactly and
+               differ only in the tokens from theme.css.
+
+     .dense-*  Pulsar. Full-width instrument panel: metric strip, treemap and
+               sortable table, with every detail carried in the row itself.
+
+   Every colour here comes from a token, so neither family hardcodes a palette.
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   SKY SHELL
+   --------------------------------------------------------------------------- */
+.sky-shell {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  min-width: 0;
+  color: #fff;
+}
+
+/* 64px, icon-only. Narrow on purpose: the sky has to stay visible, and a 214px
+   labelled rail covers the thing the theme is built around. Labels survive as
+   tooltips + aria-labels. */
+.sky-rail {
+  width: 64px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px 0;
+  gap: 5px;
+  border-right: 1px solid var(--border);
+  background: var(--rail);
+  backdrop-filter: blur(var(--glass-blur));
+}
+.sky-mark {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: var(--card2);
+  color: var(--mint-strong);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.sky-nav {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+.sky-nav svg {
+  width: 17px;
+  height: 17px;
+}
+.sky-nav:hover {
+  color: #fff;
+  background: var(--card2);
+}
+.sky-nav[data-on="true"] {
+  color: var(--mint-strong);
+  background: var(--card2);
+  border-color: var(--border-strong);
+}
+.sky-nav-pulse {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  animation: nav-pulse 1.8s ease-in-out infinite;
+}
+@keyframes nav-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.sky-rail .grow {
+  flex: 1;
+}
+
+.sky-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sky-top {
+  flex: none;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--topbar-bg);
+  backdrop-filter: blur(var(--glass-blur));
+}
+.sky-top .ttl {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.6px;
+}
+.sky-top .drv {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sky-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 36px 24px 48px;
+}
+/* Real margins so the sky breathes around the content. This single rule is
+   what separates "night sky app" from "dark app". */
+.sky-col {
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+/* ---------------------------------------------------------------------------
+   SKY CONTENT VOCABULARY
+   --------------------------------------------------------------------------- */
+.sky-eyebrow {
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  letter-spacing: 1.4px;
+  color: var(--dim);
+}
+.sky-display {
+  font-family: var(--font-display);
+  font-size: 46px;
+  line-height: 1.18;
+  letter-spacing: var(--display-tracking);
+  margin: 16px 0 14px;
+  color: #f8fbff;
+  text-shadow: var(--glow-text);
+}
+.sky-display .unit {
+  font-size: 23px;
+  color: var(--mint-strong);
+  letter-spacing: 0;
+}
+.sky-lede {
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--muted);
+  max-width: 56ch;
+  margin: 0;
+}
+.sky-lede b {
+  color: #fff;
+  font-weight: 500;
+}
+.sky-acts {
+  display: flex;
+  gap: 10px;
+  margin-top: 26px;
+  flex-wrap: wrap;
+}
+.sky-btn {
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  letter-spacing: 0.5px;
+  padding: 13px 22px;
+  border: 1px solid var(--mint-strong);
+  background: var(--card2);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.sky-btn:hover {
+  background: var(--border-strong);
+}
+.sky-btn.quiet {
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+}
+.sky-btn.quiet:hover {
+  background: var(--card2);
+  color: #fff;
+}
+
+/* Hairline stat grid — deliberately not cards. */
+.sky-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 40px;
+  border-top: 1px solid var(--border);
+}
+.sky-stat {
+  padding: 18px 16px 18px 0;
+  min-width: 0;
+}
+.sky-stat .k {
+  font-size: 9.5px;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.sky-stat .v {
+  font-family: var(--font-display);
+  font-size: 17px;
+  margin-top: 10px;
+  letter-spacing: var(--display-tracking);
+}
+.sky-stat .n {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 5px;
+}
+
+.sky-sec {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 38px 0 14px;
+}
+.sky-sec h3 {
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  margin: 0;
+  color: var(--muted);
+}
+.sky-sec .m {
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.sky-sec .lk {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--mint-strong);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+}
+.sky-sec .lk:hover {
+  text-decoration: underline;
+}
+
+/* Hairline rows. No boxes, no radius, one rule per row. */
+.sky-list {
+  border-top: 1px solid var(--border);
+}
+.sky-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sky-row:hover {
+  background: var(--card2);
+}
+.sky-row .sw {
+  width: 4px;
+  height: 28px;
+  flex: none;
+}
+.sky-row .txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sky-row .nm {
+  font-size: 13px;
+  font-weight: 500;
+}
+.sky-row .ds {
+  font-size: 11.5px;
+  color: var(--dim);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sky-row .amt {
+  margin-left: auto;
+  text-align: right;
+  flex: none;
+}
+.sky-row .amt b {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 400;
+  display: block;
+}
+.sky-row .amt > span {
+  display: block;
+  font-size: 10px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+/* Discrete pixel-cell bar. */
+.pxbar {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.pxbar i {
+  width: 6px;
+  height: 8px;
+  background: var(--track);
+}
+
+.sky-tier {
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 4px 7px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  flex: none;
+}
+.sky-tier.safe {
+  color: var(--ok);
+}
+.sky-tier.review {
+  color: var(--amber);
+}
+.sky-tier.caution {
+  color: var(--rose);
+}
+
+@media (max-width: 900px) {
+  .sky-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sky-row .pxbar {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sky-nav-pulse {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   DENSE SHELL (Pulsar)
+   --------------------------------------------------------------------------- */
+.dense-shell {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
+  background: var(--page-bg);
+  color: var(--ink, #e6e9f2);
+}
+
+.dense-side {
+  width: 208px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  background: var(--rail);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dense-brand {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+}
+.dense-brand .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--mint-strong);
+  flex: none;
+}
+.dense-brand .ver {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--dim);
+}
+.dense-grp {
+  padding: 14px 14px 6px;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.dense-nav {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 14px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.dense-nav:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--ink, #fff);
+}
+.dense-nav[data-on="true"] {
+  background: rgba(122, 162, 247, 0.1);
+  border-left-color: var(--mint-strong);
+  color: #fff;
+}
+.dense-nav .tag {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+/* Read-only counters — same rhythm as nav rows so the rail reads as one list. */
+.dense-stat {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px 6px 16px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.dense-stat .v {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.dense-side .grow {
+  flex: 1;
+}
+.dense-disk {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.7;
+}
+.dense-disk .bar {
+  height: 3px;
+  background: var(--track);
+  margin: 7px 0 6px;
+}
+.dense-disk .bar i {
+  display: block;
+  height: 100%;
+  background: var(--amber);
+}
+
+.dense-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dense-top {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--topbar-bg);
+  overflow: hidden;
+}
+.dense-top .title {
+  font-weight: 600;
+  font-size: 13px;
+  flex: none;
+}
+.dense-top .vsep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+  flex: none;
+}
+.dense-top .grow {
+  flex: 1;
+}
+.dense-pill {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  white-space: nowrap;
+  flex: none;
+}
+.dense-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 13px;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink, #fff);
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+}
+.dense-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.dense-btn.pri,
+.dense-btn[data-on="true"] {
+  background: var(--mint-strong);
+  border-color: var(--mint-strong);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+/* Content runs the full remaining width — there is no side panel. */
+.dense-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+/* -- metric strip -- */
+.dense-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.dense-metric {
+  padding: 11px 13px;
+  border-left: 1px solid var(--border);
+  min-width: 0;
+}
+.dense-metric:first-child {
+  border-left: 0;
+}
+.dense-metric .k {
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.dense-metric .v {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.dense-metric .v.key {
+  color: var(--mint-strong);
+}
+.dense-metric .d {
+  font-size: 10.5px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+
+/* -- panels -- */
+.dense-panel {
+  border: 1px solid var(--border);
+  background: var(--card);
+  margin-top: 12px;
+}
+.dense-phead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.dense-phead .r {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.dense-empty {
+  padding: 18px 12px;
+  font-size: 12px;
+  color: var(--dim);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* -- treemap: absolutely positioned from the squarify() output -- */
+.dense-treemap {
+  position: relative;
+  height: 190px;
+  margin: 12px;
+}
+.dense-tile {
+  position: absolute;
+  border: 1px solid transparent;
+  padding: 8px 9px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  display: block;
+  /* 1px inset keeps adjacent tiles visually separated without gaps in the
+     layout maths, which must stay exact for areas to be comparable. */
+  outline: 1px solid var(--page-bg);
+  outline-offset: -1px;
+}
+.dense-tile:hover {
+  border-color: currentColor;
+  z-index: 2;
+}
+.dense-tile .tn {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dense-tile .tv {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* -- dense table -- */
+.dense-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.dense-table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 500;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.dense-table th.num,
+.dense-table td.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.dense-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.dense-table tbody tr {
+  cursor: pointer;
+}
+.dense-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+.dense-table tbody tr[data-sel="true"] {
+  background: rgba(122, 162, 247, 0.12);
+  box-shadow: inset 2px 0 0 var(--mint-strong);
+}
+.dense-table td.path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dense-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.dense-tier {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1.5px 6px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.dense-tier.safe {
+  color: var(--ok);
+}
+.dense-tier.review {
+  color: var(--amber);
+}
+.dense-tier.caution {
+  color: var(--rose);
+}
+.dense-chk {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+.dense-chk[data-on="true"] {
+  background: var(--mint-strong);
+  border-color: var(--mint-strong);
+  color: var(--on-accent);
+}
+.dense-chk svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* -- footer commit bar -- */
+.dense-foot {
+  flex: none;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border);
+  background: var(--rail);
+  font-size: 12px;
+}
+.dense-foot .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--mint-strong);
+}
+.dense-foot .grow {
+  flex: 1;
+}
+
+@media (max-width: 1100px) {
+  /* Five metrics across gets cramped before the table does. */
+  .dense-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   SKY · Clean (selection)
+   --------------------------------------------------------------------------- */
+.sky-row.as-group {
+  cursor: default;
+}
+/* The name/blurb block is the expand target; the checkbox next to it is not, so
+   they have to be separate interactive elements rather than nested buttons. */
+.sky-row .as-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* 16px square with a pixel tick built from box-shadow — no SVG, so it stays
+   crisp and on-language at any zoom. */
+.sky-check {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.sky-check[data-on="true"] {
+  background: var(--mint-strong);
+  border-color: var(--mint-strong);
+}
+.sky-check[data-on="true"]::after {
+  content: "";
+  width: 2px;
+  height: 2px;
+  background: var(--on-accent);
+  box-shadow:
+    0 2px 0 var(--on-accent),
+    2px 4px 0 var(--on-accent),
+    4px 2px 0 var(--on-accent),
+    6px 0 0 var(--on-accent),
+    8px -2px 0 var(--on-accent);
+  transform: translate(-3px, -3px);
+}
+/* Partial selection: a centre block, not a tick. */
+.sky-check[data-on="false"][data-mixed="true"]::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  background: var(--mint-strong);
+  box-shadow: none;
+  transform: none;
+}
+.sky-check:focus-visible {
+  outline: 1px solid var(--mint-strong);
+  outline-offset: 2px;
+}
+
+/* Indented sub-list of paths. */
+.sky-sub {
+  padding: 4px 0 12px 34px;
+  border-bottom: 1px solid var(--border);
+}
+.sky-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.sky-file:last-child {
+  border-bottom: 0;
+}
+.sky-file .fmeta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sky-file .fl {
+  font-size: 12.5px;
+}
+.sky-file .fp {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sky-file .fstale {
+  font-size: 10.5px;
+  color: var(--dim);
+  flex: none;
+}
+.sky-file .fs {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.sky-file .freveal {
+  flex: none;
+  font: inherit;
+  font-size: 10.5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.sky-file:hover .freveal,
+.sky-file .freveal:focus-visible {
+  opacity: 1;
+}
+
+.sky-warn {
+  border-top: 1px solid var(--amber);
+  padding: 12px 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--amber);
+}
+
+/* Sticky commit bar. Negative margins bleed it to the column edges so it reads
+   as a bar rather than a floating card. */
+.sky-commit {
+  position: sticky;
+  bottom: -48px;
+  margin: 28px -24px -48px;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  background: var(--commit-bg, rgba(3, 6, 18, 0.9));
+  backdrop-filter: blur(10px);
+}
+.sky-commit .sel {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.sky-commit .sel b {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: #fff;
+}
+.sky-commit .grow {
+  flex: 1;
+}
+.sky-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sky-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+}
+.sky-seg button {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 13px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+.sky-seg button + button {
+  border-left: 1px solid var(--border);
+}
+.sky-seg button[data-on="true"] {
+  background: var(--card2);
+  color: #fff;
+}
+
+/* Empty state shares the hero vocabulary. */
+.sky-empty {
+  padding-top: 8px;
+}
+
+/* Dense: sticky footer inside the scroll region. */
+.dense-foot.sticky {
+  position: sticky;
+  bottom: 0;
+  margin: 12px -14px -14px;
+  padding: 10px 14px;
+  z-index: 3;
+}
+.dense-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.dense-log {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.9;
+  padding: 12px;
+  color: var(--muted);
+}

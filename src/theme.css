@@ -1,0 +1,546 @@
+/* ===========================================================================
+   SAFAI THEME SYSTEM  —  Nebula · Void · Pulsar
+   ===========================================================================
+
+   Three themes, one stylesheet. The trick that keeps this maintainable: every
+   component in the app already paints itself from a small set of custom
+   properties (--card, --border, --mint, --progress, --muted, --radius,
+   --font-display …). Redefining those per theme re-skins all 120-odd component
+   classes without touching a single component file.
+
+   NEBULA (default)  Pixel-art night sky in deep blue. Canvas starfield with
+                     rare comets, drawn by <PixelSky>. Square corners, chunky
+                     pixel display type, discrete block meters.
+
+   VOID              The same design with the hue removed — a monochrome print
+                     of the same photograph, not a dimmed copy of Nebula. Same
+                     sky engine, greyscale palette.
+
+   PULSAR            The instrument panel. No sky, no glow, no pixel type.
+                     Inter + tabular mono numerals, tighter rhythm, hairline
+                     rules. Denser on purpose so it's a real third choice
+                     rather than a reskin.
+
+   Only Nebula and Void render the canvas sky; Pulsar sets --sky-visible: 0 and
+   <PixelSky> skips mounting entirely, so it costs nothing.
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   NEBULA — default. Deep blue night sky.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: dark;
+
+  /* Sky-blue ramp. Kept under the historical --mint* names so every existing
+     component keeps working; the values are blue, not teal. */
+  --progress: #5b9df0;
+  --progress-2: #3a6dbf;
+  --progress-glow: rgba(91, 157, 240, 0.34);
+  --mint: #7fb2ff;
+  --mint-strong: #7fb2ff;
+  --mint-glow: rgba(127, 178, 255, 0.22);
+  --on-accent: #04061a;
+
+  --amber: #e0b155;
+  --rose: #e0798d;
+  --ok: #6ad39c;
+
+  /* Surfaces sit darker than the sky so content reads as glass held against
+     it, rather than a hole cut out of it. */
+  --card: rgba(6, 11, 30, 0.56);
+  --card2: rgba(11, 19, 44, 0.72);
+  --border: rgba(120, 160, 232, 0.16);
+  --border-strong: rgba(120, 160, 232, 0.3);
+  --muted: rgba(214, 227, 255, 0.6);
+  --dim: rgba(178, 198, 240, 0.4);
+  --track: rgba(160, 190, 255, 0.12);
+  --rail: rgba(3, 6, 18, 0.5);
+  --topbar-bg: rgba(3, 6, 18, 0.34);
+
+  --glow-text: 0 0 24px rgba(127, 178, 255, 0.22);
+  --glow-mint: 0 0 20px rgba(127, 178, 255, 0.2);
+  --glass-blur: 4px;
+
+  --font-ui: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Display face is the pixel font — this is what carries the whole aesthetic. */
+  --font-display: "Silkscreen", "Space Grotesk", monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* Pixel display type needs a touch of tracking to breathe. */
+  --display-tracking: -0.5px;
+
+  /* Square corners. The pixel language starts here. */
+  --radius: 0px;
+  --radius-sm: 0px;
+
+  /* Bars render as discrete blocks via this mask. Pulsar clears it for smooth
+     bars, which is the single declaration that changes every meter in the app. */
+  --seg-mask: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 8px);
+
+  --page-bg: #04061a;
+  --sky-visible: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   VOID — the same sky with the colour drained out.
+   Not "Nebula turned down": the hue is gone, so it reads as monochrome.
+   --------------------------------------------------------------------------- */
+html.theme-void {
+  --progress: #b4b4b8;
+  --progress-2: #7a7a7e;
+  --progress-glow: transparent;
+  --mint: #dcdcde;
+  --mint-strong: #dcdcde;
+  --mint-glow: transparent;
+  --on-accent: #0a0a0a;
+
+  /* Tier colours keep a trace of hue. Safety information is the one thing that
+     must never rely on brightness alone — that's an accessibility floor, not a
+     stylistic preference. */
+  --amber: #d2ad74;
+  --rose: #d1919c;
+  --ok: #8fc7a8;
+
+  --card: rgba(12, 12, 13, 0.62);
+  --card2: rgba(20, 20, 22, 0.8);
+  --border: rgba(255, 255, 255, 0.085);
+  --border-strong: rgba(255, 255, 255, 0.17);
+  --muted: rgba(255, 255, 255, 0.58);
+  --dim: rgba(255, 255, 255, 0.34);
+  --track: rgba(255, 255, 255, 0.09);
+  --rail: rgba(6, 6, 6, 0.55);
+  --topbar-bg: rgba(6, 6, 6, 0.4);
+
+  --glow-text: none;
+  --glow-mint: none;
+  --glass-blur: 4px;
+
+  --page-bg: #070708;
+  --sky-visible: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   PULSAR — instrument panel. Dense, flat, no sky.
+   --------------------------------------------------------------------------- */
+html.theme-pulsar {
+  --progress: #7aa2f7;
+  --progress-2: #4a69a9;
+  --progress-glow: transparent;
+  --mint: #7aa2f7;
+  --mint-strong: #7aa2f7;
+  --mint-glow: transparent;
+  --on-accent: #0a0b0f;
+
+  --amber: #e0af68;
+  --rose: #f7768e;
+  --ok: #7ddba4;
+
+  /* Opaque panels — there is no sky behind them to let through. */
+  --card: #111318;
+  --card2: #16181e;
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --muted: rgba(230, 233, 242, 0.6);
+  --dim: rgba(230, 233, 242, 0.36);
+  --track: rgba(255, 255, 255, 0.09);
+  --rail: #0d0f14;
+  --topbar-bg: #0d0f14;
+
+  --glow-text: none;
+  --glow-mint: none;
+  --glass-blur: 0px;
+
+  --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* No pixel type here — numbers are tabular mono, like a real instrument. */
+  --font-display: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --display-tracking: -0.5px;
+
+  --radius: 0px;
+  --radius-sm: 0px;
+  /* Smooth bars: precision reads better than charm on an instrument panel. */
+  --seg-mask: none;
+
+  --page-bg: #0a0b0f;
+  --sky-visible: 0;
+}
+
+/* ===========================================================================
+   Pixel language — applies to Nebula and Void (skipped under Pulsar).
+   =========================================================================== */
+
+/* Silkscreen is considerably wider than Space Grotesk at the same px value and
+   has no descender overhang, so every display size tuned for the old face has
+   to come down or it overflows its container. These are the measured
+   replacements, not guesses at a ratio. */
+html:not(.theme-pulsar) .kpi .v,
+html:not(.theme-pulsar) .dial-big,
+html:not(.theme-pulsar) .dial-cap,
+html:not(.theme-pulsar) .set-title,
+html:not(.theme-pulsar) .dash-head .t {
+  letter-spacing: var(--display-tracking);
+}
+html:not(.theme-pulsar) .kpi .v {
+  font-size: 27px;
+}
+/* The signature dial: 74px Silkscreen would spill out of the 360px gauge. */
+html:not(.theme-pulsar) .dial-big {
+  font-size: 44px;
+  letter-spacing: -1px;
+}
+html:not(.theme-pulsar) .dial-big span {
+  font-size: 20px;
+  letter-spacing: 0;
+}
+html:not(.theme-pulsar) .dial-cap {
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+html:not(.theme-pulsar) .set-title,
+html:not(.theme-pulsar) .dash-head .t {
+  font-size: 21px;
+}
+html:not(.theme-pulsar) .about-name {
+  font-size: 16px;
+}
+/* Sidebar footer total + version. */
+html:not(.theme-pulsar) .rail .foot .v {
+  font-size: 15px;
+  letter-spacing: -0.5px;
+}
+
+/* Discrete block meters. One mask declaration converts every progress bar and
+   breakdown bar in the app from smooth to pixel blocks — no component changes. */
+html:not(.theme-pulsar) .bar-fill,
+html:not(.theme-pulsar) .brk-row .b > i,
+html:not(.theme-pulsar) .auto-meter-fill,
+html:not(.theme-pulsar) .dial-track,
+html:not(.theme-pulsar) .dial-value {
+  -webkit-mask-image: var(--seg-mask);
+  mask-image: var(--seg-mask);
+}
+/* The dial is a stroked arc, so a horizontal mask would band it by screen
+   column rather than along the arc. Dashing the stroke segments it properly. */
+html:not(.theme-pulsar) .dial-value,
+html:not(.theme-pulsar) .dial-track {
+  -webkit-mask-image: none;
+  mask-image: none;
+  stroke-linecap: butt;
+}
+
+/* Pixel UIs shouldn't glide. Stepped easing reads as "snapped to a grid". */
+html:not(.theme-pulsar) .switch::after {
+  transition: transform 0.14s steps(4);
+}
+
+/* Chunky pixel labels on buttons and the section captions. */
+html:not(.theme-pulsar) .btn {
+  font-family: var(--font-display);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+html:not(.theme-pulsar) .btn-sm {
+  font-size: 10px;
+}
+html:not(.theme-pulsar) .card .h,
+html:not(.theme-pulsar) .ch {
+  font-family: var(--font-display);
+  letter-spacing: 0.6px;
+}
+/* Round icon buttons keep their circle: a square "stop" control next to a
+   progress dial reads as a broken layout rather than a style choice. */
+html:not(.theme-pulsar) .round,
+html:not(.theme-pulsar) .round-wrap,
+html:not(.theme-pulsar) .switch,
+html:not(.theme-pulsar) .switch::after,
+html:not(.theme-pulsar) .chip,
+html:not(.theme-pulsar) .pill,
+html:not(.theme-pulsar) .tier-dot,
+html:not(.theme-pulsar) .nav-pulse,
+html:not(.theme-pulsar) .auto-dot,
+html:not(.theme-pulsar) .tierline .dot,
+html:not(.theme-pulsar) .topbar .drive .dot {
+  border-radius: 999px;
+}
+
+/* ===========================================================================
+   Pulsar density pass — tighter rhythm, hairline seams, mono numerals.
+   =========================================================================== */
+html.theme-pulsar body {
+  background: var(--page-bg);
+}
+/* Flat seams instead of glass + shadow. */
+html.theme-pulsar .card,
+html.theme-pulsar .glass {
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html.theme-pulsar .rail {
+  border-right: 1px solid var(--border);
+  background: var(--rail);
+}
+html.theme-pulsar .topbar {
+  border-bottom: 1px solid var(--border);
+  background: var(--topbar-bg);
+}
+/* Instrument-panel density: pull the generous padding in across the board. */
+html.theme-pulsar .kpi {
+  padding: 13px 15px;
+}
+html.theme-pulsar .kpi .v {
+  font-size: 21px;
+  font-variant-numeric: tabular-nums;
+}
+html.theme-pulsar .panel-pad,
+html.theme-pulsar .set-card {
+  padding: 14px 16px;
+}
+html.theme-pulsar .kpis {
+  gap: 10px;
+}
+html.theme-pulsar .set-row {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+html.theme-pulsar .dial-value {
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+}
+/* Every number in the app becomes tabular, so columns line up. */
+html.theme-pulsar .value-bump,
+html.theme-pulsar .brk-row .vv,
+html.theme-pulsar .row .sz,
+html.theme-pulsar .pill {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* ===========================================================================
+   Sky host — the canvas lives behind everything, painted by <PixelSky>.
+   =========================================================================== */
+.pixel-sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Without this the browser smooth-scales the low-resolution buffer and every
+     hard pixel edge — the entire point — is lost. */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Static fallback so the app never shows a bare background if the canvas can't
+   initialise (no 2D context, or motion disabled before first paint). */
+.sky-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, #04061a 0%, #0a1132 42%, #15245a 100%);
+}
+html.theme-void .sky-fallback {
+  background: linear-gradient(180deg, #070708 0%, #0d0d0f 42%, #191919 100%);
+}
+
+/* Pulsar has no sky. The canvas stays in the DOM (PixelSky keeps one element
+   for the app's lifetime so switching themes can't leave it painting into a
+   detached node) — it's hidden here instead.
+   `display: none` rather than `visibility`/`opacity`: a hidden-but-laid-out
+   canvas would still be composited every frame for nothing. PixelSky re-measures
+   on the way back, deferring a frame if layout hasn't caught up. */
+html.theme-pulsar .sky-fallback,
+html.theme-pulsar .pixel-sky {
+  display: none;
+}
+
+/* ===========================================================================
+   Theme picker (Settings → Appearance)
+   Three options now, so the grid goes from 2 columns to 3 and the swatch
+   becomes a live miniature rather than a flat colour chip.
+   =========================================================================== */
+.theme-grid.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+.theme-opt {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+.theme-opt .sw {
+  width: 100%;
+  height: 62px;
+  position: relative;
+  overflow: hidden;
+  display: block;
+  flex: none;
+  border: 1px solid var(--border);
+}
+
+/* -- sky swatch -- */
+.sw-sky .s-star {
+  position: absolute;
+  /* Square, not round: pixel stars. */
+  border-radius: 0;
+}
+.sw-sky .s-comet {
+  position: absolute;
+  left: 62%;
+  top: 20%;
+  width: 2px;
+  height: 2px;
+  background: #fff;
+  /* Discrete pixel steps rather than a gradient, matching the real trail. */
+  box-shadow:
+    -2px -2px 0 rgba(255, 255, 255, 0.55),
+    -4px -4px 0 rgba(255, 255, 255, 0.3),
+    -6px -6px 0 rgba(255, 255, 255, 0.16),
+    -8px -8px 0 rgba(255, 255, 255, 0.07);
+}
+.sw-sky .s-ridge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 11px;
+}
+
+/* -- pulsar swatch: a dense panel, not a sky -- */
+.sw-pulsar {
+  display: flex;
+  background: #0a0b0f;
+}
+.sw-pulsar .p-rail {
+  width: 12px;
+  background: #0d0f14;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  flex: none;
+}
+.sw-pulsar .p-body {
+  flex: 1;
+  min-width: 0;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sw-pulsar .p-head {
+  height: 7px;
+  background: #111318;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  flex: none;
+}
+.sw-pulsar .p-map {
+  flex: 1;
+  display: flex;
+  gap: 2px;
+  min-height: 0;
+}
+.sw-pulsar .p-row {
+  height: 4px;
+  background: #16181e;
+  flex: none;
+}
+
+/* Selected state: Nebula/Void use the accent ring, Pulsar the same idiom, so
+   the picker reads consistently whichever theme is currently active. */
+.theme-opt[data-sel="true"] {
+  border-color: var(--mint-strong);
+  box-shadow: inset 0 0 0 1px var(--mint-strong);
+}
+html.theme-void .theme-opt[data-sel="true"] {
+  border-color: var(--border-strong);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+/* On narrow windows three columns get cramped; fall back to one. */
+@media (max-width: 720px) {
+  .theme-grid.three {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===========================================================================
+   Tier pill — themed from tokens (see TierBadge.tsx)
+   =========================================================================== */
+.tier-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  /* `color` and `border-color` are set inline from the theme token; the tint
+     behind it is derived from the same colour so it can never drift.
+     Transparent first as a fallback: on a WebView2 build too old for
+     `color-mix` the pill still reads correctly from its border and text. */
+  background: transparent;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.tier-pill .tier-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+}
+/* Under Nebula the dot gets a small bloom; Void and Pulsar stay flat. */
+:root .tier-pill .tier-dot {
+  box-shadow: 0 0 6px currentColor;
+}
+html.theme-void .tier-pill .tier-dot,
+html.theme-pulsar .tier-pill .tier-dot {
+  box-shadow: none;
+}
+/* Pulsar: square, mono, uppercase — a status code, not a badge. */
+html.theme-pulsar .tier-pill {
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 7px;
+  background: transparent;
+}
+html.theme-pulsar .tier-pill .tier-dot {
+  display: none;
+}
+
+/* ===========================================================================
+   Top bar drive readout — pixel meter on the sky themes
+   =========================================================================== */
+.topbar .drive .drive-meter {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 4px;
+}
+.topbar .drive .drive-meter i {
+  width: 4px;
+  height: 10px;
+  background: var(--track);
+}
+.topbar .drive .drive-meter i[data-fill="true"] {
+  background: var(--progress);
+}
+/* Cells past the automation threshold read "hot", so the trigger point the
+   scheduler uses is visible in the chrome itself. */
+.topbar .drive .drive-meter i[data-fill="hot"] {
+  background: var(--amber);
+}
+html.theme-pulsar .topbar .drive .drive-meter i {
+  width: 3px;
+  height: 8px;
+}
+.topbar .drive .pc {
+  font-family: var(--font-display);
+  font-size: 11px;
+  color: var(--muted);
+}
+html.theme-pulsar .topbar .drive .pc {
+  font-variant-numeric: tabular-nums;
+}

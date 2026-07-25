@@ -1,139 +1,78 @@
-import { type Component, For, Show, createMemo, createSignal } from "solid-js";
+import { type Component, Show, createSignal } from "solid-js";
 import { appStore } from "../state/store";
-import { formatBytes } from "../lib/format";
-import CategoryCard from "../components/CategoryCard";
+import { layoutFamily } from "../lib/layout";
+import { useClean } from "./clean/model";
+import CleanSky from "./clean/Sky";
+import CleanDense from "./clean/Dense";
 import ConfirmModal from "../components/ConfirmModal";
 
 /**
- * Clean · review — the big Reclaimable header, clean category cards with item
- * rows, and a sticky action bar (running selection, destination segmented
- * control, Clean up). Selection + dry-run confirmation wiring is preserved.
+ * Clean · review — dispatches to one of two layout families.
+ *
+ * `sky` groups findings by category with expandable sub-lists; `dense` shows one
+ * flat, globally sorted table. Different DOM and a different
+ * data shape, so they are separate components — but the selection state, the
+ * dry-run confirmation and the orchestration all live here, above the split, so
+ * the two variants cannot diverge on behaviour.
  */
 const Results: Component = () => {
   const [modalOpen, setModalOpen] = createSignal(false);
-
-  const report = () => appStore.state.report;
-  const selectedBytes = () => appStore.reclaimableSelectedBytes();
-  const selectedCount = () => appStore.selectedCount();
-  const toRecycleBin = () => appStore.state.toRecycleBin;
-
-  const hasItems = createMemo(() => {
-    const r = report();
-    return !!r && r.groups.some((g) => g.items.length > 0);
-  });
+  const m = useClean();
 
   const startClean = () => {
     const ids = appStore.selectedIds();
     if (ids.length === 0) return;
     setModalOpen(false);
     // Store-owned orchestration: the cleanup survives navigation between views.
-    void appStore.runClean(ids, toRecycleBin());
+    void appStore.runClean(ids, appStore.state.toRecycleBin);
+  };
+
+  const requestClean = () => {
+    if (appStore.selectedCount() > 0) setModalOpen(true);
   };
 
   return (
-    <div class="stage stage-top animate-rise">
+    <>
       <Show
-        when={report() && hasItems()}
+        when={m.hasItems()}
         fallback={
-          <div class="card empty-panel">
-            <div class="t">Your disk is clear</div>
-            <p class="s">
+          <div class="sky-empty">
+            <div class="sky-eyebrow">ALL CLEAR</div>
+            <div class="sky-display">NOTHING
+              <br />
+              TO CLEAN
+            </div>
+            <p class="sky-lede">
               No reclaimable space found. Everything looks tidy.
             </p>
-            <button
-              type="button"
-              class="btn btn-primary"
-              onClick={() => appStore.setPhase("welcome")}
-            >
-              Scan again
-            </button>
+            <div class="sky-acts">
+              <button
+                type="button"
+                class="sky-btn"
+                onClick={() => appStore.setPhase("welcome")}
+              >
+                SCAN AGAIN
+              </button>
+            </div>
           </div>
         }
       >
-        {/* Header */}
-        <div class="rev-head">
-          <div>
-            <div class="k">Reclaimable</div>
-            <div class="big">
-              {formatBytes(report()!.totalReclaimableBytes)}
-            </div>
-            <div class="sub">Safe items are pre-selected. Review the rest.</div>
-          </div>
-          <button
-            type="button"
-            class="btn btn-ghost"
-            onClick={() => appStore.setPhase("welcome")}
-          >
-            Back
-          </button>
-        </div>
-
-        {/* Category list */}
-        <div class="rev-list">
-          <For each={report()!.groups}>
-            {(group, i) => <CategoryCard group={group} defaultOpen={i() === 0} />}
-          </For>
-
-          <Show when={report()!.warnings.length > 0}>
-            <section class="card warn-card">
-              <p class="t">Warnings</p>
-              <ul>
-                <For each={report()!.warnings}>{(w) => <li>{w}</li>}</For>
-              </ul>
-            </section>
-          </Show>
-        </div>
-
-        {/* Action bar */}
-        <div class="card actionbar">
-          <div class="sel">
-            Selected:{" "}
-            <b>
-              {selectedCount()} item{selectedCount() === 1 ? "" : "s"} ·{" "}
-              {formatBytes(selectedBytes())}
-            </b>
-          </div>
-          <div class="right">
-            <div
-              class="segmented"
-              role="group"
-              aria-label="Deletion destination"
-            >
-              <button
-                type="button"
-                data-on={toRecycleBin() ? "true" : "false"}
-                onClick={() => appStore.setDestination(true)}
-              >
-                Recycle
-              </button>
-              <button
-                type="button"
-                data-on={!toRecycleBin() ? "true" : "false"}
-                onClick={() => appStore.setDestination(false)}
-              >
-                Permanent
-              </button>
-            </div>
-            <button
-              type="button"
-              class="btn btn-primary"
-              disabled={selectedCount() === 0}
-              onClick={() => setModalOpen(true)}
-            >
-              Clean up
-            </button>
-          </div>
-        </div>
+        <Show
+          when={layoutFamily(appStore.state.theme) === "dense"}
+          fallback={<CleanSky onRequestClean={requestClean} />}
+        >
+          <CleanDense onRequestClean={requestClean} />
+        </Show>
       </Show>
 
       <ConfirmModal
         open={modalOpen()}
         ids={appStore.selectedIds()}
-        toRecycleBin={toRecycleBin()}
+        toRecycleBin={appStore.state.toRecycleBin}
         onCancel={() => setModalOpen(false)}
         onConfirm={startClean}
       />
-    </div>
+    </>
   );
 };
 

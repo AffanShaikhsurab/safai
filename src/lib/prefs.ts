@@ -3,9 +3,15 @@
 // never breaks.
 
 import { load, type Store } from "@tauri-apps/plugin-store";
+import { DEFAULT_SKY as SKY_DEFAULTS, normalizeSky, type SkyPrefs } from "./sky";
 
-/** Background themes the user can pick in Settings → Appearance. */
-export type ThemeName = "nebula" | "void";
+/**
+ * Themes the user can pick in Settings → Appearance.
+ *
+ * `nebula` and `void` are one design in two palettes — both render the pixel
+ * night sky. `pulsar` is the dense instrument panel: no sky, no pixel type.
+ */
+export type ThemeName = "nebula" | "void" | "pulsar";
 
 export const DEFAULT_THEME: ThemeName = "nebula";
 
@@ -13,6 +19,7 @@ const FILE = "safai-prefs.json";
 const KEY = "theme";
 const KEY_DEEP = "deepScan";
 const KEY_RECYCLE = "toRecycleBin";
+const KEY_SKY = "sky";
 
 let storePromise: Promise<Store> | null = null;
 function getStore(): Promise<Store> {
@@ -23,20 +30,54 @@ function getStore(): Promise<Store> {
 function normalizeTheme(value: unknown): ThemeName {
   // Legacy id from older builds.
   if (value === "cursor" || value === "void") return "void";
+  if (value === "pulsar") return "pulsar";
   if (value === "nebula") return "nebula";
   return DEFAULT_THEME;
 }
 
 /**
- * Apply the theme by toggling a class on <html>. Nebula is the default (no
- * class); "void" adds `theme-void` — charcoal dark, hairline dividers, dim comets.
+ * Apply the theme by toggling a class on <html>.
+ *
+ * Nebula is the default and carries no class, so the token block in
+ * `theme.css` under `:root` is the baseline. Void and Pulsar each override that
+ * block from a single class, which is why adding a theme touches no component.
  */
 export function applyThemeClass(theme: ThemeName): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.classList.toggle("theme-void", theme === "void");
+  root.classList.toggle("theme-pulsar", theme === "pulsar");
   // Drop legacy class if present.
   root.classList.remove("theme-cursor");
+}
+
+// ---------------------------------------------------------------------------
+// Night-sky settings (Nebula and Void only)
+//
+// The shape and its validation live in `sky.ts`, which has no Tauri imports so
+// it can be unit-tested in node. This module only persists them.
+// ---------------------------------------------------------------------------
+
+export { DEFAULT_SKY, normalizeSky } from "./sky";
+export type { SkyPrefs } from "./sky";
+
+export async function loadSkyPrefs(): Promise<SkyPrefs> {
+  try {
+    const store = await getStore();
+    return normalizeSky(await store.get<SkyPrefs>(KEY_SKY));
+  } catch {
+    return { ...SKY_DEFAULTS };
+  }
+}
+
+export async function saveSkyPrefs(sky: SkyPrefs): Promise<void> {
+  try {
+    const store = await getStore();
+    await store.set(KEY_SKY, sky);
+    await store.save();
+  } catch {
+    // Non-fatal.
+  }
 }
 
 export async function loadTheme(): Promise<ThemeName> {

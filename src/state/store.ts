@@ -39,10 +39,13 @@ import { isUiEngaged, shouldParkAtResults } from "../lib/automation";
 import {
   applyThemeClass,
   DEFAULT_SCAN_PREFS,
+  DEFAULT_SKY,
   DEFAULT_THEME,
   saveScanPrefs,
+  saveSkyPrefs,
   saveTheme,
   type ScanPrefs,
+  type SkyPrefs,
   type ThemeName,
 } from "../lib/prefs";
 
@@ -88,6 +91,8 @@ export interface AppState {
   driveAfter: DriveInfo | null;
   stats: LifetimeStats;
   theme: ThemeName;
+  /** Night-sky tuning. Only meaningful for the `nebula` and `void` themes. */
+  sky: SkyPrefs;
   /** UI scan preferences (persisted; never alters backend contracts). */
   deepScan: boolean;
   /** Default deletion destination: true = Recycle Bin, false = Permanent. */
@@ -136,6 +141,7 @@ function createAppStore() {
     driveAfter: null,
     stats: { ...DEFAULT_STATS },
     theme: DEFAULT_THEME,
+    sky: { ...DEFAULT_SKY },
     deepScan: DEFAULT_SCAN_PREFS.deepScan,
     toRecycleBin: DEFAULT_SCAN_PREFS.toRecycleBin,
     scanStartedAt: 0,
@@ -224,6 +230,21 @@ function createAppStore() {
     applyThemeClass(theme);
     setState("theme", theme);
     void saveTheme(theme);
+  }
+
+  /** Hydrate sky settings from persisted storage (no persist write-back). */
+  function setSkyPrefs(sky: SkyPrefs) {
+    setState("sky", sky);
+  }
+
+  /**
+   * Patch one or more sky settings (persisted). `PixelSky` tracks `state.sky`,
+   * so the canvas rebuilds as soon as this lands — no explicit repaint call.
+   */
+  function patchSky(patch: Partial<SkyPrefs>) {
+    const next: SkyPrefs = { ...state.sky, ...patch };
+    setState("sky", next);
+    void saveSkyPrefs(next);
   }
 
   /** Hydrate scan preferences from persisted storage (no persist write-back). */
@@ -445,6 +466,8 @@ function createAppStore() {
   function toggleItem(id: string, on: boolean) {
     setState("selected", id, on);
   }
+
+
 
   function toggleCategory(category: Category, on: boolean) {
     const report = state.report;
@@ -701,6 +724,8 @@ function createAppStore() {
     setView,
     setStats,
     setTheme,
+    setSkyPrefs,
+    patchSky,
     setScanPrefs,
     setDeepScan,
     setDestination,
