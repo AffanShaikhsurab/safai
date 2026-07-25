@@ -1,61 +1,30 @@
 //! The Tauri command layer (implementation-plan.md §4).
 //!
 //! This layer is deliberately **thin**: all scanning/rules logic lives in
-//! `safai-rules` (which itself calls `safai-core`). Here we only:
-//!   * adapt `safai_rules::run_scan`'s plain callback to a Tauri `Channel`,
-//!   * enforce the deletion guardrails (allow-list + canonicalization),
+//! `safai-rules` (which itself calls `safai-core`), the shared execution cores
+//! live in `engine`, and the automation policy lives in `schedule`. Here we only:
+//!   * adapt the engine's event sink to a Tauri `Channel`,
+//!   * hold the activity gate so interactive and scheduled work can't collide,
 //!   * move heavy work off the async runtime via `spawn_blocking`,
 //!   * and marshal results into the §3.4 DTOs.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
-use safai_rules::{run_scan, CleanupItem, ScanConfig, ScanEvent};
+use safai_rules::{CleanupItem, ScanEvent};
 
 use crate::dto::{
-    DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveInfo, SafetyTier, ToolInfo,
+    DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveInfo, RuleInfo, SafetyTier,
+    ToolInfo,
 };
+use crate::engine::{self, drive_mount, is_within_allowed, normalize_slashes};
 use crate::error::{Result, SafaiError};
+use crate::schedule::{self, AutomationStatus, ScheduleConfig};
 use crate::state::SafaiState;
-
-// -------------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------------
-
-/// Normalize a path string for the UI: forward slashes only (§7).
-fn normalize_slashes(s: &str) -> String {
-    s.replace('\\', "/")
-}
-
-/// Guardrail: is `path` inside one of the allow-listed roots?
-///
-/// Canonicalizes both sides (resolving symlinks and `..`) so a path can't
-/// escape an allowed root via a link or relative segment. A path that fails to
-/// canonicalize (e.g. already gone) is treated as **not** allowed.
-fn is_within_allowed(path: &Path, roots: &[PathBuf]) -> bool {
-    let canon = match std::fs::canonicalize(path) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    roots.iter().any(|root| match std::fs::canonicalize(root) {
-        Ok(root_canon) => canon.starts_with(&root_canon),
-        // If the root itself can't be canonicalized, fall back to a raw compare.
-        Err(_) => canon.starts_with(root),
-    })
-}
-
-/// Best-effort "mount" label for a path (the drive prefix, e.g. `C:`).
-fn drive_mount(path: &Path) -> String {
-    for comp in path.components() {
-        if let Component::Prefix(prefix) = comp {
-            return normalize_slashes(&prefix.as_os_str().to_string_lossy());
-        }
-    }
-    normalize_slashes(&path.to_string_lossy())
-}
+use crate::winsys;
 
 // -------------------------------------------------------------------------
 // scan
@@ -70,40 +39,27 @@ pub async fn scan(
     on_event: Channel<ScanEvent>,
     state: State<'_, SafaiState>,
 ) -> Result<safai_rules::ScanReport> {
+    // Hold the activity slot for the duration so a scheduled run can't start a
+    // second scan and invalidate the id map underneath this one.
+    let _hold = state
+        .try_acquire()
+        .ok_or_else(|| SafaiError::Other("a scan or cleanup is already running".to_string()))?;
+
     // Fresh run: clear any stale cancellation, then hand a clone to the worker.
     state.cancel.store(false, Ordering::SeqCst);
     let cancel = state.cancel.clone();
 
-    // Resolve roots: use what the UI provided, else the crate's defaults. The
-    // same set feeds `project_scan_roots` (where pattern rules hunt).
-    let resolved: Vec<PathBuf> = if roots.is_empty() {
-        safai_rules::default_roots()
-    } else {
-        roots.iter().map(PathBuf::from).collect()
-    };
-    // Pattern rules hunt for project artifacts (`node_modules`, `target`, …),
-    // which live in dev folders — NOT in the whole profile + AppData. Using a
-    // targeted, bounded set of project roots (plus the depth limit + time
-    // budget inside `run_scan`) is what stops the scan from crawling all of
-    // AppData and appearing to hang.
-    let project_roots = safai_rules::project_scan_roots();
-    let cfg = ScanConfig {
-        roots: resolved,
-        project_scan_roots: project_roots,
-        discover_large_folders: true,
-    };
+    let cfg = engine::build_scan_config(&roots, true);
 
     // Move the blocking rayon scan off the async runtime worker threads. The
-    // crate expects a `&mut dyn FnMut(ScanEvent)`; we adapt it to the Channel
-    // by cloning `on_event` into the closure and forwarding each event via
-    // `send` (ignoring send errors — a dropped receiver just means no UI).
+    // engine takes a `&(dyn Fn(ScanEvent) + Send + Sync)` sink; we adapt it to
+    // the Channel by cloning `on_event` into a closure and forwarding each
+    // event (ignoring send errors — a dropped receiver just means no UI).
     let report = tauri::async_runtime::spawn_blocking(move || {
-        let mut forward = |ev: ScanEvent| {
+        let sink = move |ev: ScanEvent| {
             let _ = on_event.send(ev);
         };
-        // `&cancel` (an `&Arc<AtomicBool>`) coerces to the `&AtomicBool` the
-        // signature wants via Deref. `run_scan` returns a value, not a Result.
-        run_scan(&cfg, &cancel, &mut forward)
+        engine::scan_blocking(&cfg, &cancel, &sink)
     })
     .await
     .map_err(|e| SafaiError::Other(format!("scan task join error: {e}")))?;
@@ -137,13 +93,10 @@ pub fn cancel_scan(state: State<'_, SafaiState>) {
 // preview_delete
 // -------------------------------------------------------------------------
 
-/// Dry-run: resolve each id to its stored item, validate it against the
-/// allow-list, and report per-item `allowed`/`reason` plus totals.
+/// Dry run: resolve ids server-side, re-check the allow-list, and report what
+/// would happen without touching the disk.
 #[tauri::command]
-pub async fn preview_delete(
-    ids: Vec<String>,
-    state: State<'_, SafaiState>,
-) -> Result<DeletePlan> {
+pub async fn preview_delete(ids: Vec<String>, state: State<'_, SafaiState>) -> Result<DeletePlan> {
     let roots = state.allowed_roots.lock().unwrap().clone();
     let map = state.last_items.lock().unwrap();
 
@@ -204,14 +157,6 @@ pub async fn preview_delete(
 /// Delete the selected items (Recycle Bin by default). Resolves ids
 /// server-side, re-checks the guardrail per item, streams `DeleteEvent`s, and
 /// returns a `DeleteReport`.
-///
-/// **Architecture (fixes the "stuck at 0/12" bug):**
-/// - Each item is deleted on a dedicated thread with a 30-second timeout.
-/// - Items are processed in parallel (up to 4 concurrent) so one stuck item
-///   doesn't block the others.
-/// - Transient sharing violations are retried with exponential backoff.
-/// - Read-only files have their attribute stripped automatically.
-/// - Progress events are emitted before AND after each item attempt.
 #[tauri::command]
 pub async fn delete(
     ids: Vec<String>,
@@ -219,153 +164,31 @@ pub async fn delete(
     on_event: Channel<DeleteEvent>,
     state: State<'_, SafaiState>,
 ) -> Result<DeleteReport> {
+    let _hold = state
+        .try_acquire()
+        .ok_or_else(|| SafaiError::Other("a scan or cleanup is already running".to_string()))?;
+
+    // A cancelled scan leaves the shared flag set; clear it so the deletion
+    // doesn't abort on its first item.
+    state.cancel.store(false, Ordering::SeqCst);
+    let cancel = state.cancel.clone();
+
     let roots = state.allowed_roots.lock().unwrap().clone();
 
     // Resolve ids → items up front (locks can't be held across the blocking
     // task); pair each id with its stored item (or `None` if unknown).
     let resolved: Vec<(String, Option<CleanupItem>)> = {
         let map = state.last_items.lock().unwrap();
-        ids.iter().map(|id| (id.clone(), map.get(id).cloned())).collect()
+        ids.iter()
+            .map(|id| (id.clone(), map.get(id).cloned()))
+            .collect()
     };
 
-    let total = resolved.len() as u32;
-
-    let report = tauri::async_runtime::spawn_blocking(move || -> DeleteReport {
-        use crate::delete_engine::{self, DeleteOutcome};
-        use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-        use std::sync::Mutex;
-
-        let _ = on_event.send(DeleteEvent::Started { total });
-
-        // Shared counters for parallel workers.
-        let deleted_count = AtomicU32::new(0);
-        let reclaimed_total = AtomicU64::new(0);
-        let skipped_paths: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-        // Separate items into "valid" (pass guardrails) and "rejected" (skip immediately).
-        let mut valid_items: Vec<(String, CleanupItem)> = Vec::new();
-
-        for (id, maybe_item) in resolved {
-            let item = match maybe_item {
-                Some(it) => it,
-                None => {
-                    let _ = on_event.send(DeleteEvent::Skipped {
-                        id: id.clone(),
-                        path: String::new(),
-                        reason: "item not found in last scan".to_string(),
-                    });
-                    skipped_paths.lock().unwrap().push(id);
-                    continue;
-                }
-            };
-
-            let path = PathBuf::from(&item.path);
-
-            // Guardrail: never delete outside an allowed root.
-            if !is_within_allowed(&path, &roots) {
-                let _ = on_event.send(DeleteEvent::Skipped {
-                    id: item.id.clone(),
-                    path: item.path.clone(),
-                    reason: "outside allowed roots".to_string(),
-                });
-                skipped_paths.lock().unwrap().push(item.path.clone());
-                continue;
-            }
-
-            valid_items.push((id, item));
-        }
-
-        // Process valid items in parallel using a dedicated rayon pool.
-        // Cap at 4 threads to avoid saturating I/O (especially on HDD).
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(4.min(valid_items.len().max(1)))
-            .build()
-            .unwrap_or_else(|_| {
-                // Fallback: use global pool if custom pool fails.
-                rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap()
-            });
-
-        pool.install(|| {
-            use rayon::prelude::*;
-
-            valid_items.par_iter().for_each(|(_id, item)| {
-                let path = PathBuf::from(&item.path);
-
-                // Preflight: check if the path is accessible.
-                // If already gone, count as success (idempotent deletion).
-                match delete_engine::preflight_check(&path) {
-                    Err(reason) if reason == "already deleted" => {
-                        // The item is already gone — report success.
-                        deleted_count.fetch_add(1, Ordering::Relaxed);
-                        reclaimed_total.fetch_add(item.size_bytes, Ordering::Relaxed);
-                        let _ = on_event.send(DeleteEvent::Deleted {
-                            id: item.id.clone(),
-                            path: item.path.clone(),
-                            size_bytes: item.size_bytes,
-                        });
-                        return;
-                    }
-                    Err(reason) => {
-                        // Can't even access it — skip with a helpful message.
-                        let _ = on_event.send(DeleteEvent::Skipped {
-                            id: item.id.clone(),
-                            path: item.path.clone(),
-                            reason,
-                        });
-                        skipped_paths.lock().unwrap().push(item.path.clone());
-                        return;
-                    }
-                    Ok(()) => {} // Proceed with deletion.
-                }
-
-                // Attempt deletion with timeout protection.
-                let outcome = delete_engine::delete_with_timeout(&path, to_recycle_bin);
-
-                match outcome {
-                    DeleteOutcome::Success => {
-                        deleted_count.fetch_add(1, Ordering::Relaxed);
-                        reclaimed_total.fetch_add(item.size_bytes, Ordering::Relaxed);
-                        let _ = on_event.send(DeleteEvent::Deleted {
-                            id: item.id.clone(),
-                            path: item.path.clone(),
-                            size_bytes: item.size_bytes,
-                        });
-                    }
-                    DeleteOutcome::Error(msg) => {
-                        let _ = on_event.send(DeleteEvent::Skipped {
-                            id: item.id.clone(),
-                            path: item.path.clone(),
-                            reason: msg,
-                        });
-                        skipped_paths.lock().unwrap().push(item.path.clone());
-                    }
-                    DeleteOutcome::Timeout => {
-                        let _ = on_event.send(DeleteEvent::Skipped {
-                            id: item.id.clone(),
-                            path: item.path.clone(),
-                            reason: "timed out after 30s (file may be locked by another program)".to_string(),
-                        });
-                        skipped_paths.lock().unwrap().push(item.path.clone());
-                    }
-                }
-            });
-        });
-
-        let deleted = deleted_count.load(Ordering::Relaxed);
-        let reclaimed_bytes = reclaimed_total.load(Ordering::Relaxed);
-        let skipped = skipped_paths.into_inner().unwrap();
-
-        let _ = on_event.send(DeleteEvent::Finished {
-            deleted,
-            reclaimed_bytes,
-            skipped: skipped.len() as u32,
-        });
-
-        DeleteReport {
-            deleted,
-            reclaimed_bytes,
-            skipped,
-        }
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        let sink = move |ev: DeleteEvent| {
+            let _ = on_event.send(ev);
+        };
+        engine::delete_blocking(resolved, &roots, to_recycle_bin, &cancel, &sink)
     })
     .await
     .map_err(|e| SafaiError::Other(format!("delete task join error: {e}")))?;
@@ -388,7 +211,7 @@ pub fn open_path(path: String, app: AppHandle) -> Result<()> {
 }
 
 // -------------------------------------------------------------------------
-// detect_tools
+// detect_tools / default_roots / cleanup_rules
 // -------------------------------------------------------------------------
 
 /// Which dev tools are installed (UI chips + rule gating).
@@ -404,10 +227,6 @@ pub fn detect_tools() -> Vec<ToolInfo> {
         .collect()
 }
 
-// -------------------------------------------------------------------------
-// default_roots
-// -------------------------------------------------------------------------
-
 /// Suggested scan roots as forward-slash display strings.
 #[tauri::command]
 pub fn default_roots(_app: AppHandle) -> Vec<String> {
@@ -417,92 +236,97 @@ pub fn default_roots(_app: AppHandle) -> Vec<String> {
         .collect()
 }
 
+/// The full cleanup rule table, so the Automation screen can offer a per-rule
+/// opt-in for autopilot instead of making the user trust a category blanket.
+#[tauri::command]
+pub fn cleanup_rules() -> Vec<RuleInfo> {
+    safai_rules::rules::all_rules()
+        .into_iter()
+        .map(|rule| RuleInfo {
+            id: rule.id.to_string(),
+            label: rule.label.to_string(),
+            category: rule.category,
+            tier: rule.tier,
+            regenerates: rule.regenerates,
+            note: rule.note.to_string(),
+            // Pattern rules are discovered by directory name, not a fixed path.
+            pattern_based: rule.pattern.is_some(),
+        })
+        .collect()
+}
+
 // -------------------------------------------------------------------------
 // drive_info
 // -------------------------------------------------------------------------
 
 /// Free/total bytes for the drive containing `path` (header gauge).
 ///
-/// On Windows this calls `GetDiskFreeSpaceExW` through a tiny FFI declaration
-/// (see [`win_disk`]) so we don't pull in an extra crate. On other platforms
-/// it returns zeros (Safai is Windows-first; a cross-platform impl is a later
-/// change per §7).
+/// Backed by `GetDiskFreeSpaceExW` on Windows (see [`crate::winsys`]); other
+/// platforms report zeros, as Safai is Windows-first.
 #[tauri::command]
 pub fn drive_info(path: String) -> Result<DriveInfo> {
     let p = PathBuf::from(&path);
     let mount = drive_mount(&p);
 
-    #[cfg(windows)]
-    {
-        match win_disk::disk_free_total(&p) {
-            Some((free_bytes, total_bytes)) => Ok(DriveInfo {
-                mount,
-                free_bytes,
-                total_bytes,
-            }),
-            None => Err(SafaiError::Other(format!(
-                "failed to query disk space for {path}"
-            ))),
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        // Non-Windows fallback: report zeros (see doc comment).
-        Ok(DriveInfo {
+    match winsys::disk_free_total(&p) {
+        Some((free_bytes, total_bytes)) => Ok(DriveInfo {
+            mount,
+            free_bytes,
+            total_bytes,
+        }),
+        None if cfg!(windows) => Err(SafaiError::Other(format!(
+            "failed to query disk space for {path}"
+        ))),
+        // Non-Windows fallback: report zeros rather than failing the UI.
+        None => Ok(DriveInfo {
             mount,
             free_bytes: 0,
             total_bytes: 0,
-        })
+        }),
     }
 }
 
-/// Minimal Windows FFI for querying free/total disk space without an extra
-/// crate. Isolated here so the single `unsafe` block stays small and audited.
-#[cfg(windows)]
-mod win_disk {
-    use std::os::windows::ffi::OsStrExt;
-    use std::path::Path;
+// -------------------------------------------------------------------------
+// Automation
+// -------------------------------------------------------------------------
 
-    #[link(name = "kernel32")]
-    extern "system" {
-        // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw
-        fn GetDiskFreeSpaceExW(
-            lp_directory_name: *const u16,
-            lp_free_bytes_available_to_caller: *mut u64,
-            lp_total_number_of_bytes: *mut u64,
-            lp_total_number_of_free_bytes: *mut u64,
-        ) -> i32;
-    }
+/// Current automation config + schedule + audit trail.
+#[tauri::command]
+pub fn automation_status(app: AppHandle) -> AutomationStatus {
+    schedule::status(&app)
+}
 
-    /// Returns `(free_bytes_available_to_caller, total_bytes)` for the volume
-    /// containing `path`, or `None` if the query fails.
-    pub fn disk_free_total(path: &Path) -> Option<(u64, u64)> {
-        // Build a null-terminated UTF-16 path for the wide API.
-        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-        wide.push(0);
+/// Persist a new automation config. Sanitizes the input, reconciles the OS
+/// logon entry, and re-evaluates the schedule immediately.
+#[tauri::command]
+pub fn set_automation_config(app: AppHandle, config: ScheduleConfig) -> AutomationStatus {
+    schedule::apply_config(&app, config)
+}
 
-        let mut free_to_caller: u64 = 0;
-        let mut total_bytes: u64 = 0;
-        let mut total_free: u64 = 0;
+/// Queue an immediate automation run, bypassing cadence and constraints.
+#[tauri::command]
+pub fn run_automation_now(app: AppHandle) {
+    schedule::runtime(&app).request_run();
+}
 
-        // SAFETY: `wide` is a valid, null-terminated UTF-16 buffer that lives
-        // for the duration of the call. The three out-pointers reference stack
-        // locals that outlive the call. `GetDiskFreeSpaceExW` only reads the
-        // path and writes the three u64 out-params; it has no other effects.
-        let ok = unsafe {
-            GetDiskFreeSpaceExW(
-                wide.as_ptr(),
-                &mut free_to_caller,
-                &mut total_bytes,
-                &mut total_free,
-            )
-        };
+/// Ask the in-flight automation run to wind down.
+#[tauri::command]
+pub fn stop_automation(app: AppHandle) {
+    schedule::runtime(&app).cancel_run();
+}
 
-        if ok != 0 {
-            Some((free_to_caller, total_bytes))
-        } else {
-            None
-        }
+/// Tell the backend whether the user is mid-flow in the Clean screens, so
+/// automation stays out of the way instead of invalidating their selection.
+#[tauri::command]
+pub fn set_ui_engaged(engaged: bool, state: State<'_, SafaiState>) {
+    state.set_ui_engaged(engaged);
+}
+
+/// Hide the main window to the tray (used by the "close to tray" affordance).
+#[tauri::command]
+pub fn hide_to_tray(app: AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
     }
 }

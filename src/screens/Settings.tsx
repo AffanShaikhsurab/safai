@@ -171,7 +171,7 @@ const Settings: Component = () => {
       <div class="card set-card">
         <div class="h">About</div>
         <div class="about-name">
-          Safai <span class="ver">v0.1.0</span>
+          Safai <span class="ver">v0.1.2</span>
         </div>
         <div class="about-desc">
           A calm, developer-focused disk cleanup tool. Everything goes to the

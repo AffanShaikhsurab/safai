@@ -99,3 +99,108 @@ export interface ToolInfo {
   label: string;
   detected: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Automation (scheduled / proactive maintenance)
+// ---------------------------------------------------------------------------
+
+/** How often an automatic maintenance run happens. */
+export type Cadence = "manual" | "daily" | "everyThreeDays" | "weekly";
+
+/** What caused an automation run to start. */
+export type TriggerKind = "cadence" | "threshold" | "manual";
+
+/** Where an automation run currently is. */
+export type RunPhase = "idle" | "scanning" | "cleaning";
+
+/** One entry of the cleanup rule table (for the autopilot allow-list UI). */
+export interface RuleInfo {
+  id: string;
+  label: string;
+  category: Category;
+  tier: SafetyTier;
+  regenerates: boolean;
+  note: string;
+  patternBased: boolean;
+}
+
+/** Persisted automation settings. Mirrors the Rust `ScheduleConfig`. */
+export interface ScheduleConfig {
+  enabled: boolean;
+
+  // Time trigger.
+  cadence: Cadence;
+  /** Local hour (0–23) the cadence run prefers. */
+  preferredHour: number;
+
+  // Capacity trigger.
+  thresholdEnabled: boolean;
+  /** Fire when *used* space reaches this percentage. */
+  thresholdPercent: number;
+  /** Drive to watch, as a path. Empty = the drive holding the profile. */
+  thresholdPath: string;
+
+  // Constraints.
+  runOnlyWhenIdle: boolean;
+  idleMinutes: number;
+  skipOnBattery: boolean;
+
+  // What an automatic run may do.
+  autoClean: boolean;
+  autoCleanTiers: SafetyTier[];
+  autoCleanCategories: Category[];
+  /** Empty = every rule allowed by the tier + category filters. */
+  autoCleanRuleIds: string[];
+  maxAutoCleanBytes: number;
+  toRecycleBin: boolean;
+
+  // Presence.
+  autostart: boolean;
+  minimizeToTray: boolean;
+  notify: boolean;
+}
+
+/** One entry in the automation audit trail. */
+export interface RunRecord {
+  at: number;
+  trigger: TriggerKind;
+  scannedItems: number;
+  reclaimableBytes: number;
+  cleanedItems: number;
+  reclaimedBytes: number;
+  autoCleaned: boolean;
+  skippedItems: number;
+  durationMs: number;
+  error: string | null;
+}
+
+/** High-frequency progress for a run in flight. */
+export interface AutomationProgress {
+  phase: RunPhase;
+  currentPath: string;
+  foundBytes: number;
+  itemCount: number;
+  deleted: number;
+  reclaimedBytes: number;
+  skipped: number;
+}
+
+/** Everything the Automation screen needs, in one payload. */
+export interface AutomationStatus {
+  config: ScheduleConfig;
+  lastRunAt: number | null;
+  nextDueAt: number | null;
+  running: boolean;
+  phase: RunPhase;
+  currentTrigger: TriggerKind | null;
+  /** Why the scheduler is holding back, if it is. */
+  deferredReason: string | null;
+  history: RunRecord[];
+  disk: DriveInfo | null;
+  diskUsedPercent: number | null;
+  autostartRegistered: boolean;
+  idleSecs: number;
+  onBattery: boolean;
+  cadenceLabel: string;
+  progress: AutomationProgress;
+}

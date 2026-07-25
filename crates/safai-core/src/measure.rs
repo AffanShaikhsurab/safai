@@ -120,8 +120,7 @@ fn size_subdirs_parallel(roots: Vec<PathBuf>, cancel: &AtomicBool, progress: &At
 
     // Per-worker LIFO local queues (DFS flavour: good locality). Stealers are
     // shared so idle workers can steal from busy ones.
-    let workers: Vec<Worker<PathBuf>> =
-        (0..thread_count).map(|_| Worker::new_lifo()).collect();
+    let workers: Vec<Worker<PathBuf>> = (0..thread_count).map(|_| Worker::new_lifo()).collect();
     let stealers: Vec<Stealer<PathBuf>> = workers.iter().map(|w| w.stealer()).collect();
 
     // Scoped threads borrow `injector`, `active`, `progress`, `stealers`,
@@ -286,8 +285,7 @@ pub fn size_many(
         injector.push((j, root.clone()));
     }
 
-    let workers: Vec<Worker<TaggedTask>> =
-        (0..thread_count).map(|_| Worker::new_lifo()).collect();
+    let workers: Vec<Worker<TaggedTask>> = (0..thread_count).map(|_| Worker::new_lifo()).collect();
     let stealers: Vec<Stealer<TaggedTask>> = workers.iter().map(|w| w.stealer()).collect();
 
     std::thread::scope(|s| {
@@ -595,13 +593,22 @@ mod tests {
         );
 
         // The pruned directory itself IS reported.
-        assert!(visited.contains(&node_modules), "node_modules should be reported");
+        assert!(
+            visited.contains(&node_modules),
+            "node_modules should be reported"
+        );
         // But its children are NOT descended into / visited.
-        assert!(!visited.contains(&pkg), "pruned dir's child must not be visited");
+        assert!(
+            !visited.contains(&pkg),
+            "pruned dir's child must not be visited"
+        );
 
         // Non-pruned directories are fully walked.
         assert!(visited.contains(&keep), "keep should be visited");
-        assert!(visited.contains(&inner_keep), "inner_keep should be visited");
+        assert!(
+            visited.contains(&inner_keep),
+            "inner_keep should be visited"
+        );
     }
 
     #[test]

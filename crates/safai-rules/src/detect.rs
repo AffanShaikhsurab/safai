@@ -98,11 +98,7 @@ pub fn tool_on_path(exe: &str) -> bool {
 
     // Candidate file names to probe for. On Windows the launcher is usually a
     // `.exe` or (for JS tooling) a `.cmd` shim; the bare name covers POSIX.
-    let candidates = [
-        exe.to_string(),
-        format!("{exe}.exe"),
-        format!("{exe}.cmd"),
-    ];
+    let candidates = [exe.to_string(), format!("{exe}.exe"), format!("{exe}.cmd")];
 
     for dir in std::env::split_paths(&path_var) {
         for cand in &candidates {
@@ -165,10 +161,7 @@ pub fn default_roots() -> Vec<PathBuf> {
     }
 
     // Known cache parents worth surfacing directly.
-    let cache_parents = [
-        "%LOCALAPPDATA%",
-        "%APPDATA%",
-    ];
+    let cache_parents = ["%LOCALAPPDATA%", "%APPDATA%"];
     for spec in cache_parents {
         if let Some(p) = expand(spec) {
             if !roots.iter().any(|existing| existing == &p) {

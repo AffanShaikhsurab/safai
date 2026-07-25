@@ -1748,3 +1748,255 @@ html.theme-void body {
 .modal-rule {
   border-color: var(--border);
 }
+
+/* ===========================================================================
+   Automation
+   Reuses the Settings vocabulary (.set-wrap / .set-card / .set-row / .switch /
+   .segmented / .chip) and adds only what's specific to scheduling.
+   =========================================================================== */
+
+/* Sidebar: running indicator */
+.nav-pulse {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--mint-strong);
+  box-shadow: 0 0 8px var(--mint-strong);
+  animation: auto-pulse 1.6s ease-in-out infinite;
+}
+@keyframes auto-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-pulse {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* Status block */
+.auto-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.auto-status-text {
+  min-width: 0;
+  flex: 1;
+}
+.auto-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+}
+.auto-dot[data-state="armed"] {
+  background: var(--mint-strong);
+  box-shadow: 0 0 10px var(--mint-strong);
+}
+.auto-dot[data-state="running"] {
+  background: var(--mint-strong);
+  box-shadow: 0 0 10px var(--mint-strong);
+  animation: auto-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auto-dot[data-state="running"] {
+    animation: none;
+  }
+}
+
+.auto-path {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--card2);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Disk meter with a threshold marker */
+.auto-meter {
+  margin-top: 16px;
+}
+.auto-meter-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+.auto-meter-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: visible;
+}
+.auto-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--progress, var(--mint-strong));
+  transition: width 0.4s ease;
+}
+.auto-meter-fill[data-over="true"] {
+  background: var(--amber);
+}
+.auto-meter-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.75);
+  transform: translateX(-1px);
+}
+
+/* Inputs */
+.auto-select {
+  appearance: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card2);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.auto-select:focus-visible {
+  outline: 2px solid var(--mint-strong);
+  outline-offset: 2px;
+}
+.auto-range {
+  width: 160px;
+  accent-color: var(--mint-strong);
+  cursor: pointer;
+}
+
+/* Explanatory copy */
+.auto-note {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.auto-note.warn {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fde68a;
+}
+.auto-warn {
+  color: var(--amber);
+}
+
+/* Mode picker (scan-only vs autopilot) */
+.auto-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* Chip as a toggle */
+.chip[data-on="false"] {
+  opacity: 0.45;
+}
+.chip[data-on] {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  font-family: inherit;
+}
+.chip[data-on="true"] {
+  border-color: var(--border-strong);
+  background: var(--card2);
+  opacity: 1;
+}
+
+/* Per-rule allow-list */
+.auto-rules {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.auto-rules-head {
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 10px;
+}
+.auto-rule {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.auto-rule input {
+  margin-top: 3px;
+  accent-color: var(--mint-strong);
+  flex: none;
+}
+.auto-rule-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.auto-rule-label {
+  font-size: 13px;
+}
+.auto-rule-note {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+/* Audit trail */
+.auto-run {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.auto-run:first-of-type {
+  border-top: 0;
+}
+.auto-run-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.auto-run-when {
+  font-size: 13px;
+  font-weight: 500;
+}
+.auto-run-trigger {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.auto-run-detail {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}

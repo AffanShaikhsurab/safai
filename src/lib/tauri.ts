@@ -6,12 +6,15 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  AutomationStatus,
   DeleteEvent,
   DeletePlan,
   DeleteReport,
   DriveInfo,
+  RuleInfo,
   ScanEvent,
   ScanReport,
+  ScheduleConfig,
   ToolInfo,
 } from "./types";
 
@@ -80,4 +83,53 @@ export function driveInfo(path: string): Promise<DriveInfo> {
 export async function pickFolder(): Promise<string | null> {
   const selected = await open({ directory: true, multiple: false });
   return typeof selected === "string" ? selected : null;
+}
+
+// ---------------------------------------------------------------------------
+// Automation
+// ---------------------------------------------------------------------------
+
+/** The cleanup rule table, for the autopilot allow-list UI. */
+export function cleanupRules(): Promise<RuleInfo[]> {
+  return invoke<RuleInfo[]>("cleanup_rules");
+}
+
+/** Current automation config, schedule and audit trail. */
+export function automationStatus(): Promise<AutomationStatus> {
+  return invoke<AutomationStatus>("automation_status");
+}
+
+/**
+ * Persist a new automation config. The backend sanitizes the input (clamping
+ * ranges, refusing to auto-clean `caution` items) and returns the resulting
+ * status, so always trust the response over the value you sent.
+ */
+export function setAutomationConfig(
+  config: ScheduleConfig,
+): Promise<AutomationStatus> {
+  return invoke<AutomationStatus>("set_automation_config", { config });
+}
+
+/** Queue an immediate automation run, bypassing cadence and constraints. */
+export function runAutomationNow(): Promise<void> {
+  return invoke<void>("run_automation_now");
+}
+
+/** Ask the in-flight automation run to wind down. */
+export function stopAutomation(): Promise<void> {
+  return invoke<void>("stop_automation");
+}
+
+/**
+ * Tell the backend whether the user is mid-flow in the Clean screens. While
+ * engaged, automation holds off rather than replacing the scan results their
+ * selection is built from.
+ */
+export function setUiEngaged(engaged: boolean): Promise<void> {
+  return invoke<void>("set_ui_engaged", { engaged });
+}
+
+/** Park the window in the tray. */
+export function hideToTray(): Promise<void> {
+  return invoke<void>("hide_to_tray");
 }

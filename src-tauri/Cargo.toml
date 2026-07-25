@@ -13,7 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon` powers the background/automation presence in the notification area.
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-os = "2"
@@ -26,10 +27,36 @@ rayon = { workspace = true }
 safai-core = { path = "../crates/safai-core" }
 safai-rules = { path = "../crates/safai-rules" }
 tauri-plugin-notification = "2.3.3"
+# Automation: launch at logon + keep a single instance so the tray is unique.
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-single-instance = "2.4.3"
+# Local-timezone date math for "run daily at 02:00" style schedules. Only the
+# clock feature is needed; no serde/wasm extras.
+chrono = { version = "0.4.45", default-features = false, features = [
+    "clock",
+    "std",
+] }
+# Timer + notify primitives for the scheduler tick. Tauri already pulls tokio
+# in, so this adds no binary weight — it just makes the dependency explicit.
+tokio = { version = "1.47", default-features = false, features = [
+    "time",
+    "sync",
+    "rt",
+    "macros",
+] }
+
+[dev-dependencies]
+# Real directories for the deletion-guardrail tests: the allow-list check
+# canonicalizes paths, so it can only be tested against a real filesystem.
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_Power",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Input_KeyboardAndMouse",
 ] }
