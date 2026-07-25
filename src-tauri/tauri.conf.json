@@ -1,6 +1,6 @@
 {
   "productName": "Safai",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "identifier": "com.safai.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,13 +26,24 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Safai",
+    "shortDescription": "Reclaim developer disk space, safely.",
+    "longDescription": "Safai finds the caches, build artifacts and junk your developer tools quietly pile up, tells you what is safe to remove, and cleans it to the Recycle Bin. Written in Rust: it reads millions of files in seconds.",
+    "category": "Utility",
+    "licenseFile": "../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser"
+      }
+    }
   },
   "plugins": {}
 }

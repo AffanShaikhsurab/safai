@@ -3,6 +3,7 @@ import { appStore } from "../state/store";
 import { DEFAULT_STATS, saveStats } from "../lib/stats";
 import { type ThemeName } from "../lib/prefs";
 import { COMET_STEPS, PIXEL_STEPS, STAR_STEPS } from "../lib/sky";
+import { APP_VERSION_LABEL } from "../lib/version";
 import ThemeSwatch from "../components/ThemeSwatch";
 
 interface ThemeOption {
@@ -306,7 +307,7 @@ const Settings: Component = () => {
       <div class="card set-card">
         <div class="h">About</div>
         <div class="about-name">
-          Safai <span class="ver">v0.1.2</span>
+          Safai <span class="ver">{APP_VERSION_LABEL}</span>
         </div>
         <div class="about-desc">
           A calm, developer-focused disk cleanup tool. Everything goes to the

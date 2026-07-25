@@ -3,6 +3,7 @@ import { appStore, type View } from "../state/store";
 import { formatBytes, relativeTime } from "../lib/format";
 import { usedPercent } from "../lib/sky";
 import { NAV_ITEMS } from "./nav";
+import { APP_VERSION } from "../lib/version";
 
 /**
  * Shell for the `dense` layout family (Pulsar).
@@ -41,7 +42,7 @@ const DenseShell: Component<{ children: JSX.Element; footer?: JSX.Element }> = (
         <div class="dense-brand">
           <span class="dot" aria-hidden="true" />
           SAFAI
-          <span class="ver">0.1.2</span>
+          <span class="ver">{APP_VERSION}</span>
         </div>
 
         <div class="dense-grp">Workspace</div>

@@ -4,13 +4,19 @@
     <meta charset="utf-8" />
     <title>Safai logo</title>
     <!--
-      SOURCE for assets/safai-logo.png. Rendered headlessly at 2x:
-        npm run assets:logo
+      SOURCE for assets/safai-logo.png and for the app/installer icon master.
+      Rendered headlessly at 2x:
 
-      A thin wrapper that inlines safai-logo.svg at a fixed 256x256 so the
-      screenshot has a deterministic size. `image-rendering: pixelated` keeps the
-      4-unit pixel grid hard-edged when the SVG is scaled up, which is the whole
-      point of drawing it on a grid.
+        npm run assets:logo    ->  512x512  (README)
+        npm run assets:icon    -> 1024x1024 (master for `tauri icon`)
+
+      Sized from the viewport rather than fixed pixels, so the render script's
+      --window-size is the single source of truth for output size and one file
+      serves both jobs.
+
+      `image-rendering: pixelated` keeps the 4-unit pixel grid hard-edged when
+      the SVG scales up. Without it the browser smooth-scales and the whole point
+      of drawing on a grid is lost — at icon sizes that reads as a blurry smudge.
     -->
     <style>
       * {
@@ -19,14 +25,14 @@
       }
       html,
       body {
-        width: 256px;
-        height: 256px;
+        width: 100%;
+        height: 100%;
         overflow: hidden;
         background: #01030a;
       }
       img {
-        width: 256px;
-        height: 256px;
+        width: 100%;
+        height: 100%;
         display: block;
         image-rendering: pixelated;
         image-rendering: crisp-edges;

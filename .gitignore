@@ -28,3 +28,6 @@ docs/
 # Benchmark output (machine-specific)
 benchmarks/results.json
 benchmarks/run-log.txt
+
+# Generated icon master (derived from assets/logo.html via npm run assets:icon)
+assets/icon-master.png
