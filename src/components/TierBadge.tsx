@@ -1,11 +1,28 @@
 import { type Component } from "solid-js";
 import type { SafetyTier } from "../lib/types";
 
-// Tier colors: Safe=sky blue, Review=amber, Caution=rose.
+/**
+ * The safety-tier pill.
+ *
+ * Colours come from the theme tokens (`--ok` / `--amber` / `--rose`) rather than
+ * fixed Tailwind classes. That matters: Void desaturates the whole palette, and
+ * a hardcoded `sky-300` badge would stay vividly blue in a monochrome theme —
+ * the one obviously-broken element on the screen.
+ *
+ * The tiers keep a trace of hue in every theme on purpose. Safety information is
+ * the one thing that must not be conveyed by brightness alone.
+ */
 const TIER_LABEL: Record<SafetyTier, string> = {
   safe: "Safe",
   review: "Review",
   caution: "Caution",
+};
+
+/** Token that carries each tier's colour, per theme. */
+const TIER_VAR: Record<SafetyTier, string> = {
+  safe: "var(--ok)",
+  review: "var(--amber)",
+  caution: "var(--rose)",
 };
 
 // Shared tier → aura class helper so category cards can tint their glow with
@@ -21,35 +38,15 @@ export function tierAura(tier: SafetyTier): string {
 }
 
 const TierBadge: Component<{ tier: SafetyTier }> = (props) => {
+  const color = () => TIER_VAR[props.tier];
+
   return (
     <span
-      class="pill inline-flex items-center gap-1.5 !py-0.5 !text-[0.7rem] font-medium tracking-wide"
-      classList={{
-        "!border-sky-400/40 !bg-sky-400/10 text-sky-300":
-          props.tier === "safe",
-        "!border-amber-400/40 !bg-amber-400/10 text-amber-300":
-          props.tier === "review",
-        "!border-rose-400/50 !bg-rose-400/10 text-rose-300":
-          props.tier === "caution",
-      }}
+      class="tier-pill"
+      data-tier={props.tier}
+      style={{ color: color(), "border-color": color() }}
     >
-      <span
-        class="h-1.5 w-1.5 rounded-full"
-        classList={{
-          "bg-sky-300": props.tier === "safe",
-          "bg-amber-300": props.tier === "review",
-          "bg-rose-300": props.tier === "caution",
-        }}
-        style={{
-          "box-shadow":
-            props.tier === "safe"
-              ? "0 0 6px rgba(110,168,255,0.9)"
-              : props.tier === "review"
-                ? "0 0 6px rgba(251,191,36,0.9)"
-                : "0 0 6px rgba(251,113,133,0.9)",
-        }}
-        aria-hidden="true"
-      />
+      <span class="tier-dot" style={{ background: color() }} aria-hidden="true" />
       {TIER_LABEL[props.tier]}
     </span>
   );

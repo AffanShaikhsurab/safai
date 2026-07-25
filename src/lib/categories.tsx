@@ -11,7 +11,16 @@ import type { Category } from "./types";
  */
 export interface CategoryMeta {
   label: string;
+  /** Full explanation, for card layouts and tooltips. Two sentences. */
   description: string;
+  /**
+   * One short clause, for single-line hairline rows.
+   *
+   * The `sky` layout renders category rows at 11.5px on a single line, where
+   * `description` overflows badly. Not a duplicate of it — a different length
+   * target for a different layout.
+   */
+  blurb: string;
   Icon: Component<{ class?: string }>;
 }
 
@@ -81,42 +90,49 @@ const StarIcon = base(
 const META: Record<Category, CategoryMeta> = {
   packageCache: {
     label: "Package Manager Caches",
+    blurb: "npm, pip, cargo and gradle downloads. Refilled on next install.",
     description:
       "Downloaded packages kept by tools like npm, uv, gradle or bun. Safe to clear — they re-download on the next install.",
     Icon: PackageIcon,
   },
   editorStorage: {
     label: "App & Editor Data",
+    blurb: "Editor workspace history and indexes. Some recent history resets.",
     description:
       "Workspace history, indexes and databases your editors and apps keep. Clearing frees space; some recent history may reset.",
     Icon: AppIcon,
   },
   buildArtifact: {
     label: "Build Artifacts",
+    blurb: "node_modules, target and build output. A rebuild brings them back.",
     description:
       "Generated output like node_modules, target and build folders. They rebuild from your project, so removing them is reversible.",
     Icon: BuildIcon,
   },
   temp: {
     label: "Temporary Files",
+    blurb: "Scratch files apps left behind. Almost always safe.",
     description:
       "Scratch files apps leave behind. Almost always safe to remove.",
     Icon: TempIcon,
   },
   model: {
     label: "Downloaded Models",
+    blurb: "Local AI model weights. These do not come back on their own.",
     description:
       "Large AI/ML model files downloaded by local tools. Only remove ones you no longer use — re-downloading can be slow.",
     Icon: ModelIcon,
   },
   browser: {
     label: "Browser & Runtime Data",
+    blurb: "Cached test browsers and runtimes. Re-downloaded on demand.",
     description:
       "Cached browser engines and runtimes (e.g. test browsers). Re-installed on demand.",
     Icon: BrowserIcon,
   },
   other: {
     label: "Other Large Items",
+    blurb: "Big folders no rule recognised. Worth a look before removing.",
     description:
       "Sizeable folders that don't fit a known category. Review carefully before removing.",
     Icon: StarIcon,
@@ -126,6 +142,7 @@ const META: Record<Category, CategoryMeta> = {
 const FALLBACK: CategoryMeta = {
   label: "Other Large Items",
   description: "Review these before removing.",
+  blurb: "Unrecognised folder. Review before removing.",
   Icon: StarIcon,
 };
 

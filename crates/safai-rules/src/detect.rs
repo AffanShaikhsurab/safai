@@ -228,11 +228,59 @@ pub fn display_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Serialises the tests that mutate `USERPROFILE`.
+    ///
+    /// Environment variables are process-global, but Rust runs tests in parallel
+    /// threads *within one process*. Three tests below each set `USERPROFILE` to
+    /// a different value and then assert on the result, so without this lock
+    /// they clobber each other and fail on an unlucky interleaving — roughly one
+    /// run in eight, which is exactly the kind of flake that randomly fails CI
+    /// on unrelated pull requests.
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        // A poisoned lock only means some other test panicked while holding it;
+        // the env var is still ours to overwrite, so recover rather than cascade
+        // one failure into three.
+        match LOCK.get_or_init(|| Mutex::new(())).lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    /// Restores `USERPROFILE` on drop so these tests can't leak a fake home into
+    /// any test that runs afterwards.
+    struct HomeGuard {
+        previous: Option<String>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl HomeGuard {
+        fn set(value: &str) -> Self {
+            let lock = env_lock();
+            let previous = std::env::var("USERPROFILE").ok();
+            std::env::set_var("USERPROFILE", value);
+            HomeGuard {
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+    }
 
     #[test]
     fn expand_resolves_set_var() {
         // Set a variable and confirm the token resolves against it.
-        std::env::set_var("USERPROFILE", "C:\\Users\\tester");
+        let _home = HomeGuard::set("C:\\Users\\tester");
         // Use the internal textual expander to avoid depending on the path
         // actually existing on disk.
         let out = expand_str("%USERPROFILE%/.gradle/caches").expect("expands");
@@ -245,7 +293,7 @@ mod tests {
 
     #[test]
     fn expand_tilde_uses_userprofile() {
-        std::env::set_var("USERPROFILE", "C:\\Users\\tilde");
+        let _home = HomeGuard::set("C:\\Users\\tilde");
         let out = expand_str("~/.bun/install/cache").expect("expands");
         let normalized = out.replace('\\', "/");
         assert!(
@@ -263,7 +311,7 @@ mod tests {
 
     #[test]
     fn expand_nonexistent_path_returns_none() {
-        std::env::set_var("USERPROFILE", "C:\\Users\\definitely-missing-xyz");
+        let _home = HomeGuard::set("C:\\Users\\definitely-missing-xyz");
         // The full `expand` includes an existence check, so a bogus path is
         // rejected even though the variable is set.
         assert!(expand("%USERPROFILE%/this/does/not/exist/xyzzy").is_none());

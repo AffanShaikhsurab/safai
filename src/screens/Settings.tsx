@@ -2,27 +2,36 @@ import { type Component, For, Show, createSignal } from "solid-js";
 import { appStore } from "../state/store";
 import { DEFAULT_STATS, saveStats } from "../lib/stats";
 import { type ThemeName } from "../lib/prefs";
+import { COMET_STEPS, PIXEL_STEPS, STAR_STEPS } from "../lib/sky";
+import ThemeSwatch from "../components/ThemeSwatch";
 
 interface ThemeOption {
   id: ThemeName;
   label: string;
   detail: string;
-  swatch: string;
 }
 
+/**
+ * The three themes. Nebula and Void are the same design in two palettes — both
+ * render the pixel night sky — while Pulsar swaps the sky for a denser
+ * instrument panel. The copy says so, because "why are there two dark themes"
+ * is otherwise a fair question.
+ */
 const THEMES: ThemeOption[] = [
   {
     id: "nebula",
     label: "Nebula",
-    detail: "Night sky — stars, glow & comets",
-    swatch:
-      "radial-gradient(circle at 15% 60%, #2a56d4, transparent 50%), radial-gradient(circle at 80% 20%, #1a2a5a, transparent 45%), #050814",
+    detail: "Deep blue night sky. Pixel stars, rare comets, a dark horizon.",
   },
   {
     id: "void",
     label: "Void",
-    detail: "Charcoal dark — hairline dividers, dim comets",
-    swatch: "linear-gradient(90deg, #0a0a0a 48%, #1a1a1a 49%, #0a0a0a 50%), #0a0a0a",
+    detail: "The same sky with the colour drained out. Charcoal, no blue.",
+  },
+  {
+    id: "pulsar",
+    label: "Pulsar",
+    detail: "Instrument panel. Dense, flat, no sky. Numbers over atmosphere.",
   },
 ];
 
@@ -35,7 +44,7 @@ interface Tier {
 const TIERS: Tier[] = [
   {
     label: "Safe",
-    color: "var(--mint-strong)",
+    color: "var(--ok)",
     detail: "Regenerates on its own — pre-selected for you.",
   },
   {
@@ -46,14 +55,14 @@ const TIERS: Tier[] = [
   {
     label: "Caution",
     color: "var(--rose)",
-    detail: "Your own data — never pre-selected, always your call.",
+    detail: "Your own data — never pre-selected, never auto-cleaned.",
   },
 ];
 
 /**
- * Settings — Appearance (the only place the theme switches), Scan preferences
- * (store-level defaults, persisted), the Safety tiers legend, About, and a
- * deliberately two-step, counter-only "reset lifetime stats".
+ * Settings — Appearance (the sole theme picker), the night-sky controls, scan
+ * preferences, the safety-tier legend, About, and a deliberately two-step,
+ * counter-only "reset lifetime stats".
  */
 const Settings: Component = () => {
   const [confirming, setConfirming] = createSignal(false);
@@ -69,6 +78,10 @@ const Settings: Component = () => {
     setConfirming(false);
   };
 
+  const sky = () => appStore.state.sky;
+  /** The sky controls are meaningless under Pulsar, which draws no sky. */
+  const hasSky = () => appStore.state.theme !== "pulsar";
+
   return (
     <div class="set-wrap animate-rise">
       <div>
@@ -79,7 +92,7 @@ const Settings: Component = () => {
       {/* Appearance — the sole theme picker */}
       <div class="card set-card">
         <div class="h">Appearance</div>
-        <div class="theme-grid">
+        <div class="theme-grid three">
           <For each={THEMES}>
             {(opt) => (
               <button
@@ -89,7 +102,9 @@ const Settings: Component = () => {
                 aria-pressed={appStore.state.theme === opt.id}
                 onClick={() => appStore.setTheme(opt.id)}
               >
-                <span class="sw" style={{ background: opt.swatch }} aria-hidden="true" />
+                {/* A live miniature of the real sky, not a static swatch — it's
+                    the only honest way to preview a starfield. */}
+                <ThemeSwatch theme={opt.id} />
                 <div>
                   <div class="n">{opt.label}</div>
                   <div class="d">{opt.detail}</div>
@@ -99,6 +114,126 @@ const Settings: Component = () => {
           </For>
         </div>
       </div>
+
+      {/* Night sky — Nebula and Void only */}
+      <Show when={hasSky()}>
+        <div class="card set-card">
+          <div class="h">Night sky</div>
+
+          <div class="set-row">
+            <div>
+              <div class="rl">Comets</div>
+              <div class="rd">
+                How often a meteor crosses the sky. Rare keeps it an event.
+              </div>
+            </div>
+            <div class="segmented" role="group" aria-label="Comet frequency">
+              <For each={COMET_STEPS}>
+                {(step) => (
+                  <button
+                    type="button"
+                    data-on={sky().comets === step.value ? "true" : "false"}
+                    onClick={() => appStore.patchSky({ comets: step.value })}
+                  >
+                    {step.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div>
+              <div class="rl">Stars</div>
+              <div class="rd">Density of the starfield.</div>
+            </div>
+            <div class="segmented" role="group" aria-label="Star density">
+              <For each={STAR_STEPS}>
+                {(step) => (
+                  <button
+                    type="button"
+                    data-on={sky().density === step.value ? "true" : "false"}
+                    onClick={() => appStore.patchSky({ density: step.value })}
+                  >
+                    {step.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div>
+              <div class="rl">Pixel size</div>
+              <div class="rd">
+                How chunky the sky renders. Also sets how much it costs to draw.
+              </div>
+            </div>
+            <div class="segmented" role="group" aria-label="Pixel size">
+              <For each={PIXEL_STEPS}>
+                {(step) => (
+                  <button
+                    type="button"
+                    data-on={sky().pixel === step.value ? "true" : "false"}
+                    onClick={() => appStore.patchSky({ pixel: step.value })}
+                  >
+                    {step.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div>
+              <div class="rl">Horizon</div>
+              <div class="rd">A dark ridge along the bottom of the window.</div>
+            </div>
+            <span
+              class="switch"
+              data-on={sky().horizon ? "true" : "false"}
+              role="switch"
+              aria-checked={sky().horizon}
+              aria-label="Show horizon"
+            >
+              <input
+                type="checkbox"
+                class="sr-check"
+                checked={sky().horizon}
+                onChange={(e) =>
+                  appStore.patchSky({ horizon: e.currentTarget.checked })
+                }
+              />
+            </span>
+          </div>
+
+          <div class="set-row">
+            <div>
+              <div class="rl">Motion</div>
+              <div class="rd">
+                Twinkle and comets. Your system's reduce-motion setting always
+                wins.
+              </div>
+            </div>
+            <span
+              class="switch"
+              data-on={sky().motion ? "true" : "false"}
+              role="switch"
+              aria-checked={sky().motion}
+              aria-label="Sky motion"
+            >
+              <input
+                type="checkbox"
+                class="sr-check"
+                checked={sky().motion}
+                onChange={(e) =>
+                  appStore.patchSky({ motion: e.currentTarget.checked })
+                }
+              />
+            </span>
+          </div>
+        </div>
+      </Show>
 
       {/* Scan preferences — store-level defaults (no backend contract change) */}
       <div class="card set-card">
