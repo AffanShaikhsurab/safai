@@ -24,3 +24,7 @@ docs/
 
 # Temp scan artifacts
 *.tmp
+
+# Benchmark output (machine-specific)
+benchmarks/results.json
+benchmarks/run-log.txt
