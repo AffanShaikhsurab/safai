@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Safai logo</title>
+    <!--
+      SOURCE for assets/safai-logo.png. Rendered headlessly at 2x:
+        npm run assets:logo
+
+      A thin wrapper that inlines safai-logo.svg at a fixed 256x256 so the
+      screenshot has a deterministic size. `image-rendering: pixelated` keeps the
+      4-unit pixel grid hard-edged when the SVG is scaled up, which is the whole
+      point of drawing it on a grid.
+    -->
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        width: 256px;
+        height: 256px;
+        overflow: hidden;
+        background: #01030a;
+      }
+      img {
+        width: 256px;
+        height: 256px;
+        display: block;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="./safai-logo.svg" alt="Safai" />
+  </body>
+</html>

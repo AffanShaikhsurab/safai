@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/safai-banner.png" alt="Safai — Reclaim developer disk space" width="100%" />
+<img src="assets/safai-banner.png" alt="Safai — Reclaim your disk. Safely." width="100%" />
 
 <br />
 
-<img src="assets/safai-logo.png" alt="Safai logo" width="96" />
+<img src="assets/safai-logo.svg" alt="Safai logo" width="88" />
 
 ### Reclaim gigabytes of disk space on your dev machine — safely.
 
@@ -59,8 +59,15 @@ sorted picture of what you can get back:
   threshold you pick. Choose *scan and tell me*, or pre-approve specific safe
   caches and let it reclaim them on its own. It waits until you're idle and on
   power, and runs at background I/O priority so you never feel it.
-- **🌌 Made to look at** — a calm, modern UI with two themes: **Nebula** (night
-  sky, stars & comets) and **Void** (charcoal dark with hairline dividers).
+- **🌌 Made to look at** — three themes, and two of them are genuinely different
+  apps rather than palette swaps:
+  - **Nebula** — a pixel-art night sky rendered on canvas. Real starfields, a
+    rare comet, a dark horizon. Content sits in a centred column so the sky has
+    room to be seen.
+  - **Void** — the same sky with the colour drained out. Charcoal, no blue.
+  - **Pulsar** — an instrument panel instead. Metric strip, a proportional disk
+    treemap, and a dense sortable table. For when you want the numbers, not the
+    atmosphere.
 
 ## How it helps
 
@@ -192,7 +199,38 @@ The installer is produced under `src-tauri/target/release/bundle/`.
 3. **Clean** — choose **Recycle Bin** (default, recoverable) or **Permanent**,
    confirm the preview, and Safai does the rest.
 
-Your reclaimed total and history live on the **Dashboard**.
+Your reclaimed total and history live on the **Overview**.
+
+### Themes
+
+**Settings → Appearance.** Nebula and Void share one layout; Pulsar uses a
+different one entirely. Under the two sky themes you can also tune the starfield
+— comet frequency, star density, pixel size, the horizon ridge, and motion (which
+always defers to your system's reduce-motion setting).
+
+---
+
+## Brand assets
+
+| File | What it is |
+| --- | --- |
+| `assets/safai-logo.svg` | The logo. Hand-drawn on a 4-unit pixel grid, so it holds up at favicon size. |
+| `assets/safai-banner.png` | The README banner, rendered at 2x. |
+| `assets/banner.html` · `assets/logo.html` | The **sources**. Both PNGs are generated, not hand-edited. |
+
+```bash
+npm run assets          # re-render both
+```
+
+Rendering goes through `scripts/render-asset.mjs`, which drives whichever
+Chromium-based browser is already installed via `--headless --screenshot` — no
+180MB Puppeteer download for a job Edge already does.
+
+Two deliberate choices in the banner source: the wordmark is built from a
+hand-authored 5×7 pixel bitmap rather than set in a webfont (a headless render
+can't guarantee a font request resolves, and a silent fallback to Courier would
+ship a broken banner), and the starfield uses a seeded PRNG so re-rendering
+produces a byte-identical sky instead of a meaningless binary diff.
 
 ## Is it safe?
 
