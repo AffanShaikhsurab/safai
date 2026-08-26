@@ -230,7 +230,24 @@ pub fn delete_blocking(
                 Ok(()) => {}
             }
 
-            match delete_engine::delete_with_timeout(&path, to_recycle_bin) {
+            let outcome =
+                delete_engine::delete_with_timeout(&path, to_recycle_bin, item.size_bytes);
+
+            // Large Recycle Bin moves often exceed even a scaled timeout while
+            // the files remain deletable. User already confirmed removal, so
+            // fall back to permanent robust delete once.
+            let outcome = match outcome {
+                DeleteOutcome::Timeout { .. }
+                    if to_recycle_bin
+                        && item.size_bytes >= delete_engine::RECYCLE_FALLBACK_MIN_BYTES
+                        && path.exists() =>
+                {
+                    delete_engine::delete_with_timeout(&path, false, item.size_bytes)
+                }
+                other => other,
+            };
+
+            match outcome {
                 DeleteOutcome::Success => {
                     deleted_count.fetch_add(1, Ordering::Relaxed);
                     reclaimed_total.fetch_add(item.size_bytes, Ordering::Relaxed);
@@ -248,12 +265,11 @@ pub fn delete_blocking(
                     });
                     skipped_paths.lock().unwrap().push(item.path.clone());
                 }
-                DeleteOutcome::Timeout => {
+                DeleteOutcome::Timeout { waited_secs } => {
                     sink(DeleteEvent::Skipped {
                         id: item.id.clone(),
                         path: item.path.clone(),
-                        reason: "timed out after 30s (file may be locked by another program)"
-                            .to_string(),
+                        reason: delete_engine::timeout_skip_reason(waited_secs),
                     });
                     skipped_paths.lock().unwrap().push(item.path.clone());
                 }
