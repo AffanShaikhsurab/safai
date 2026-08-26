@@ -8,6 +8,9 @@
 //! 5. Supporting long paths (>260 chars) via extended-length prefix
 //! 6. Pre-checking if a directory is accessible before attempting deletion
 //!
+//! Large folders (e.g. AI agent caches) get a size-scaled timeout so a slow
+//! Recycle Bin move is not misreported as "locked by another program."
+//!
 //! References: docs/research-windows-file-deletion.md
 
 use std::fs;
@@ -21,27 +24,65 @@ use std::time::Duration;
 // Configuration
 // ---------------------------------------------------------------------------
 
-/// Maximum time to wait for a single item's deletion before skipping it.
-const DELETE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Base wait before we abandon a single item (small caches finish in ms).
+const DELETE_TIMEOUT_BASE: Duration = Duration::from_secs(60);
+
+/// Extra wait granted per full GiB of known item size.
+const DELETE_TIMEOUT_PER_GIB: Duration = Duration::from_secs(30);
+
+/// Hard cap so one item cannot stall a cleanup run indefinitely.
+const DELETE_TIMEOUT_MAX: Duration = Duration::from_secs(600);
+
+/// Minimum size for Recycle Bin timeout → permanent-delete fallback.
+pub const RECYCLE_FALLBACK_MIN_BYTES: u64 = 500 * 1024 * 1024;
+
+const GIB: u64 = 1024 * 1024 * 1024;
 
 /// Maximum retry attempts for transient lock errors.
-const MAX_RETRIES: u32 = 5;
+const MAX_RETRIES: u32 = 12;
 
-/// Initial retry delay (doubles each attempt: 10, 20, 40, 80, 160ms).
-const INITIAL_RETRY_DELAY_MS: u64 = 10;
+/// Initial retry delay (doubles each attempt, capped at [`MAX_RETRY_DELAY`]).
+const INITIAL_RETRY_DELAY_MS: u64 = 50;
+
+/// Cap on per-attempt backoff (~several seconds total across retries).
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /// Result of attempting to delete a single item.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeleteOutcome {
     /// Successfully deleted.
     Success,
     /// Failed with an error message.
     Error(String),
     /// Timed out — the deletion thread is still running but we moved on.
-    Timeout,
+    Timeout {
+        /// How long we waited before abandoning this item.
+        waited_secs: u64,
+    },
+}
+
+/// Compute the per-item deletion timeout from the scan-time size.
+///
+/// Formula: `60s + 30s × floor(size / GiB)`, capped at 10 minutes.
+pub fn timeout_for_size(size_bytes: u64) -> Duration {
+    let extra_secs = (size_bytes / GIB).saturating_mul(DELETE_TIMEOUT_PER_GIB.as_secs());
+    let total = DELETE_TIMEOUT_BASE
+        .as_secs()
+        .saturating_add(extra_secs)
+        .min(DELETE_TIMEOUT_MAX.as_secs());
+    Duration::from_secs(total)
+}
+
+/// User-facing skip reason for a timed-out deletion (not a proven lock).
+pub fn timeout_skip_reason(waited_secs: u64) -> String {
+    format!(
+        "timed out after {waited_secs}s — folder is very large or still in use; \
+         try Reveal or Permanent delete"
+    )
 }
 
 /// Delete a single path (file or directory) with timeout protection.
@@ -49,9 +90,14 @@ pub enum DeleteOutcome {
 /// If `to_recycle_bin` is true, uses the `trash` crate (IFileOperation COM).
 /// Otherwise uses our robust recursive removal with retries.
 ///
-/// Returns within `DELETE_TIMEOUT` regardless of whether the underlying
-/// operation completes.
-pub fn delete_with_timeout(path: &Path, to_recycle_bin: bool) -> DeleteOutcome {
+/// Returns within [`timeout_for_size`]`(`size_bytes`)` regardless of whether
+/// the underlying operation completes.
+pub fn delete_with_timeout(
+    path: &Path,
+    to_recycle_bin: bool,
+    size_bytes: u64,
+) -> DeleteOutcome {
+    let timeout = timeout_for_size(size_bytes);
     let path_owned = path.to_path_buf();
     let (tx, rx) = mpsc::channel();
 
@@ -68,10 +114,12 @@ pub fn delete_with_timeout(path: &Path, to_recycle_bin: bool) -> DeleteOutcome {
         let _ = tx.send(result);
     });
 
-    match rx.recv_timeout(DELETE_TIMEOUT) {
+    match rx.recv_timeout(timeout) {
         Ok(Ok(())) => DeleteOutcome::Success,
         Ok(Err(msg)) => DeleteOutcome::Error(msg),
-        Err(mpsc::RecvTimeoutError::Timeout) => DeleteOutcome::Timeout,
+        Err(mpsc::RecvTimeoutError::Timeout) => DeleteOutcome::Timeout {
+            waited_secs: timeout.as_secs(),
+        },
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             DeleteOutcome::Error("deletion thread panicked".to_string())
         }
@@ -133,6 +181,8 @@ fn remove_dir_contents_robust(dir: &Path) -> io::Result<()> {
         }
     };
 
+    let mut failed_paths: Vec<PathBuf> = Vec::new();
+
     for entry in entries {
         let entry_path = entry.path();
         let ft = match entry.file_type() {
@@ -140,25 +190,57 @@ fn remove_dir_contents_robust(dir: &Path) -> io::Result<()> {
             Err(_) => continue, // Skip entries we can't classify
         };
 
-        if ft.is_dir() {
+        let result = if ft.is_dir() {
             // Check for reparse points (junctions, symlinks to dirs).
             // These should be removed without recursing into them.
             if is_reparse_point(&entry_path) {
-                // Remove the junction/symlink itself, don't follow it.
-                let _ = remove_dir_with_retry(&entry_path);
+                remove_dir_with_retry(&entry_path)
             } else {
-                // Regular directory: recurse.
-                remove_dir_contents_robust(&entry_path)?;
-                remove_dir_with_retry(&entry_path)?;
+                remove_dir_contents_robust(&entry_path)
+                    .and_then(|_| remove_dir_with_retry(&entry_path))
             }
         } else {
-            // File or symlink-to-file.
-            let _ = remove_file_with_retry(&entry_path);
-            // Don't hard-fail on individual files — continue with the rest.
+            remove_file_with_retry(&entry_path)
+        };
+
+        if result.is_err() {
+            failed_paths.push(entry_path);
         }
     }
 
-    Ok(())
+    // Second pass: retry anything that failed once (locks often clear quickly).
+    failed_paths.retain(|path| {
+        if !path.exists() {
+            return false;
+        }
+        let still_bad = if path.is_dir() {
+            remove_dir_contents_robust(path)
+                .and_then(|_| remove_dir_with_retry(path))
+                .is_err()
+        } else {
+            remove_file_with_retry(path).is_err()
+        };
+        still_bad
+    });
+
+    if failed_paths.is_empty() {
+        Ok(())
+    } else {
+        let sample: Vec<String> = failed_paths
+            .iter()
+            .take(3)
+            .map(|p| short_name(&p.to_string_lossy()).to_string())
+            .collect();
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "could not delete {} item(s) under '{}', e.g. {}",
+                failed_paths.len(),
+                short_name(&dir.to_string_lossy()),
+                sample.join(", ")
+            ),
+        ))
+    }
 }
 
 fn remove_file_with_retry(path: &Path) -> io::Result<()> {
@@ -199,7 +281,7 @@ fn remove_file_with_retry(path: &Path) -> io::Result<()> {
                             return Err(e);
                         }
                         thread::sleep(delay);
-                        delay = delay.saturating_mul(2).min(Duration::from_millis(500));
+                        delay = delay.saturating_mul(2).min(MAX_RETRY_DELAY);
                     }
 
                     // ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33)
@@ -209,7 +291,7 @@ fn remove_file_with_retry(path: &Path) -> io::Result<()> {
                             return Err(e);
                         }
                         thread::sleep(delay);
-                        delay = delay.saturating_mul(2).min(Duration::from_millis(500));
+                        delay = delay.saturating_mul(2).min(MAX_RETRY_DELAY);
                     }
 
                     // Anything else is a hard failure.
@@ -243,7 +325,7 @@ fn remove_dir_with_retry(path: &Path) -> io::Result<()> {
                             return Err(e);
                         }
                         thread::sleep(delay);
-                        delay = delay.saturating_mul(2).min(Duration::from_millis(500));
+                        delay = delay.saturating_mul(2).min(MAX_RETRY_DELAY);
                     }
 
                     _ => return Err(e),
@@ -364,7 +446,71 @@ pub fn friendly_error_message(code: i32, path: &str) -> String {
 }
 
 /// Extract just the last path component for display.
-#[allow(dead_code)]
 fn short_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_scales_with_size() {
+        assert_eq!(timeout_for_size(0).as_secs(), 60);
+        assert_eq!(timeout_for_size(100).as_secs(), 60);
+        assert_eq!(timeout_for_size(GIB - 1).as_secs(), 60);
+        assert_eq!(timeout_for_size(GIB).as_secs(), 90);
+        assert_eq!(timeout_for_size(2 * GIB).as_secs(), 120);
+        assert_eq!(timeout_for_size(20 * GIB).as_secs(), 600); // capped
+    }
+
+    #[test]
+    fn timeout_skip_reason_does_not_blame_a_lock() {
+        let msg = timeout_skip_reason(90);
+        assert!(msg.contains("timed out after 90s"));
+        assert!(msg.contains("very large or still in use"));
+        assert!(!msg.contains("locked by another program"));
+    }
+
+    #[test]
+    fn remove_dir_all_robust_deletes_nested_tree() {
+        let root = tempfile::tempdir().expect("temp");
+        let nested = root.path().join("outer").join("inner");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("blob"), b"data").unwrap();
+
+        remove_dir_all_robust(&root.path().join("outer")).unwrap();
+        assert!(!root.path().join("outer").exists());
+    }
+
+    /// When a child cannot be deleted, we must report it — not silently ignore
+    /// the file and then fail the parent with a vague ENOTEMPTY.
+    #[cfg(unix)]
+    #[test]
+    fn remove_dir_all_robust_names_undeletable_children() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temp");
+        let dir = root.path().join("agent-cache");
+        let locked = dir.join("locked-subdir");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::write(locked.join("secret.bin"), b"secret").unwrap();
+
+        // Drop write on the subdir so its child file cannot be unlinked.
+        let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&locked, perms).unwrap();
+
+        let err = remove_dir_all_robust(&dir).expect_err("should report failure");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not delete"),
+            "expected named failure, got: {msg}"
+        );
+
+        // Restore write so TempDir cleanup can remove the tree.
+        let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&locked, perms).unwrap();
+    }
 }

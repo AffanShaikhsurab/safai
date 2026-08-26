@@ -319,6 +319,49 @@ pub fn all_rules() -> Vec<CleanupRule> {
             requires_tool: None,
         },
         // ---------------------------------------------------------------
+        // AI agent / coding-assistant home directories.
+        // ---------------------------------------------------------------
+        CleanupRule {
+            id: "gemini-agent",
+            label: "Google Gemini agent data",
+            category: Category::Other,
+            tier: SafetyTier::Review,
+            locations: vec![PathSpec::new("%USERPROFILE%/.gemini")],
+            pattern: None,
+            regenerates: false,
+            note: "Local data for the Gemini CLI / agent (caches, config, and \
+                   conversation history). Can free a lot of space but is not \
+                   pure regenerable cache — use Reveal to inspect before \
+                   removing. Never auto-cleaned.",
+            requires_tool: None,
+        },
+        CleanupRule {
+            id: "openai-agent",
+            label: "OpenAI agent data",
+            category: Category::Other,
+            tier: SafetyTier::Review,
+            locations: vec![PathSpec::new("%USERPROFILE%/.openai")],
+            pattern: None,
+            regenerates: false,
+            note: "Local data for OpenAI / Codex-style tools (caches, config, \
+                   and history). Inspect with Reveal before removing; not \
+                   auto-cleaned.",
+            requires_tool: None,
+        },
+        CleanupRule {
+            id: "claude-agent",
+            label: "Claude agent data",
+            category: Category::Other,
+            tier: SafetyTier::Review,
+            locations: vec![PathSpec::new("%USERPROFILE%/.claude")],
+            pattern: None,
+            regenerates: false,
+            note: "Local data for Claude Code / agent tools (caches, config, \
+                   and history). Inspect with Reveal before removing; not \
+                   auto-cleaned.",
+            requires_tool: None,
+        },
+        // ---------------------------------------------------------------
         // Build artifacts discovered by pattern (via walk_pruned).
         // ---------------------------------------------------------------
         CleanupRule {
@@ -367,4 +410,42 @@ pub fn all_rules() -> Vec<CleanupRule> {
             requires_tool: None,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Category, SafetyTier};
+
+    #[test]
+    fn ai_agent_rules_are_review_and_not_regenerating() {
+        let rules = all_rules();
+        for id in ["gemini-agent", "openai-agent", "claude-agent"] {
+            let rule = rules
+                .iter()
+                .find(|r| r.id == id)
+                .unwrap_or_else(|| panic!("missing rule {id}"));
+            assert_eq!(rule.tier, SafetyTier::Review, "{id}");
+            assert!(!rule.regenerates, "{id}");
+            assert_eq!(rule.category, Category::Other, "{id}");
+            assert!(
+                !rule.locations.is_empty(),
+                "{id} must have a fixed location"
+            );
+        }
+    }
+
+    #[test]
+    fn ai_agent_rules_point_at_userprofile_dot_dirs() {
+        let rules = all_rules();
+        let expected = [
+            ("gemini-agent", "%USERPROFILE%/.gemini"),
+            ("openai-agent", "%USERPROFILE%/.openai"),
+            ("claude-agent", "%USERPROFILE%/.claude"),
+        ];
+        for (id, path) in expected {
+            let rule = rules.iter().find(|r| r.id == id).expect(id);
+            assert_eq!(rule.locations[0].raw, path);
+        }
+    }
 }

@@ -320,4 +320,34 @@ mod tests {
         assert!(plan.total_bytes <= cfg.max_auto_clean_bytes);
         assert_eq!(plan.items[0].id, "big", "largest that fits comes first");
     }
+
+    #[test]
+    fn ai_agent_review_items_are_never_auto_eligible() {
+        // Even if a hand-edited config opts into Review + Other, non-regenerating
+        // agent dirs must stay manual-only.
+        let cfg = ScheduleConfig {
+            auto_clean_tiers: vec![SafetyTier::Safe, SafetyTier::Review],
+            auto_clean_categories: vec![Category::Other, Category::PackageCache],
+            ..Default::default()
+        };
+
+        for rule_id in ["gemini-agent", "openai-agent", "claude-agent"] {
+            let plan = select_auto_clean(
+                &report(vec![item(
+                    rule_id,
+                    rule_id,
+                    Category::Other,
+                    SafetyTier::Review,
+                    2_000_000_000,
+                    false,
+                )]),
+                &cfg,
+            );
+            assert!(
+                plan.is_empty(),
+                "{rule_id} must never be autopilot-eligible"
+            );
+            assert_eq!(plan.excluded_by_policy, 1);
+        }
+    }
 }
