@@ -1,0 +1,3 @@
+# Keep packed binaries out of git; prepare-bin copies them before publish.
+bin/*.exe
+*.tgz

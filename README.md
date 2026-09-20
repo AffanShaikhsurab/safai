@@ -251,7 +251,13 @@ You don't have to open the desktop app. Agents (Cursor, Claude Code, and similar
 can scan and reclaim space through the headless CLI — same engine and guardrails
 as the UI. Deletes still need **your** explicit yes in chat.
 
-### 1. Build the CLI
+### 1. Install the CLI
+
+```bash
+npm install -g safai
+```
+
+Or from this repo:
 
 ```bash
 cargo build -p safai-cli --release
@@ -271,10 +277,10 @@ scan → summarize → ask you → preview → delete with `--yes` only after yo
 ### 3. Copy-paste this prompt
 
 ```
-Use the Safai skill / CLI to check my disk for reclaimable developer junk
-(caches, node_modules, build artifacts).
+Use the Safai CLI (`npm i -g safai` if needed) to check my disk for reclaimable
+developer junk (caches, node_modules, build artifacts).
 
-1. Build or run: cargo run -p safai-cli -- scan --progress
+1. Run: safai scan --progress
 2. Summarize the largest Safe wins with sizes and item ids.
 3. Do NOT delete anything yet — propose what to clean and wait for my yes.
 4. Only after I approve: safai preview --ids … then safai delete --ids … --token … --yes

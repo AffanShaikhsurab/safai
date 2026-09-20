@@ -14,10 +14,10 @@ Headless disk cleanup for developer machines. Prefer the **CLI**, not the Tauri 
 ## Prerequisites
 
 ```bash
-cargo build -p safai-cli --release
+npm install -g safai
 ```
 
-Binary: `target/release/safai.exe` (or `cargo run -p safai-cli -- …`).
+Fallback from this repo: `cargo build -p safai-cli --release` or `cargo run -p safai-cli -- …`.
 
 ## Workflow (required)
 

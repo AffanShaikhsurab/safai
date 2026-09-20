@@ -295,19 +295,19 @@ const App: Component = () => {
             </p>
             <ol class="lp-agent-steps">
               <li>
-                <code>cargo build -p safai-cli --release</code>
+                <code>npm install -g safai</code>
               </li>
               <li>
                 Point the agent at <code>.cursor/skills/safai/</code> or{" "}
-                <code>.claude/skills/safai/</code>
+                <code>.claude/skills/safai/</code> (optional, if you have the repo)
               </li>
               <li>Paste this prompt:</li>
             </ol>
             <pre class="lp-prompt" tabindex="0">
-{`Use the Safai skill / CLI to check my disk for reclaimable developer junk
-(caches, node_modules, build artifacts).
+{`Use the Safai CLI (npm i -g safai) to check my disk for reclaimable
+developer junk (caches, node_modules, build artifacts).
 
-1. Build or run: cargo run -p safai-cli -- scan --progress
+1. Run: safai scan --progress
 2. Summarize the largest Safe wins with sizes and item ids.
 3. Do NOT delete anything yet — propose what to clean and wait for my yes.
 4. Only after I approve: safai preview --ids … then

@@ -21,6 +21,9 @@
     "fmt:check": "cargo fmt --all -- --check",
     "cli": "cargo run -p safai-cli --",
     "cli:build": "cargo build -p safai-cli --release",
+    "cli:pack": "cargo build -p safai-cli --release && npm pack --workspace=false",
+    "cli:publish": "cargo build -p safai-cli --release && npm run _publish-cli",
+    "_publish-cli": "npm --prefix npm/safai publish --access public",
     "check": "npm run typecheck && npm run test && npm run build && npm run fmt:check && npm run lint:rust && npm run test:rust"
   },
   "dependencies": {
