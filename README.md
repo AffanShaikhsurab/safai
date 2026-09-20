@@ -245,6 +245,58 @@ Yes — safety is the whole point:
 
 ---
 
+## Use Safai with your coding agent
+
+You don't have to open the desktop app. Agents (Cursor, Claude Code, and similar)
+can scan and reclaim space through the headless CLI — same engine and guardrails
+as the UI. Deletes still need **your** explicit yes in chat.
+
+### 1. Build the CLI
+
+```bash
+cargo build -p safai-cli --release
+# Binary: target/release/safai.exe
+```
+
+### 2. Give the agent the skill
+
+This repo ships skills the agent can load:
+
+- Cursor: `.cursor/skills/safai/`
+- Claude Code: `.claude/skills/safai/`
+
+Open this project in the agent, or point it at those folders. The skill teaches
+scan → summarize → ask you → preview → delete with `--yes` only after you approve.
+
+### 3. Copy-paste this prompt
+
+```
+Use the Safai skill / CLI to check my disk for reclaimable developer junk
+(caches, node_modules, build artifacts).
+
+1. Build or run: cargo run -p safai-cli -- scan --progress
+2. Summarize the largest Safe wins with sizes and item ids.
+3. Do NOT delete anything yet — propose what to clean and wait for my yes.
+4. Only after I approve: safai preview --ids … then safai delete --ids … --token … --yes
+   (Recycle Bin by default; never --permanent unless I ask).
+
+Stay inside Safai's guardrails. Prefer Safe tier. Never invent paths — use ids
+from the scan only.
+```
+
+Useful commands:
+
+```bash
+safai roots
+safai detect-tools
+safai drive-info
+safai scan [--root PATH]... [--quick] [--progress]
+safai preview --ids id1,id2
+safai delete --ids id1,id2 --token <confirm_token> --yes
+```
+
+---
+
 ## Contributing
 
 Contributions are welcome! See **[CONTRIBUTING.md](./CONTRIBUTING.md)** to get set

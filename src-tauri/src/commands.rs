@@ -16,11 +16,8 @@ use tauri::{AppHandle, State};
 
 use safai_rules::{CleanupItem, ScanEvent};
 
-use crate::dto::{
-    DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveInfo, RuleInfo, SafetyTier,
-    ToolInfo,
-};
-use crate::engine::{self, drive_mount, is_within_allowed, normalize_slashes};
+use crate::dto::{DeleteEvent, DeletePlan, DeleteReport, DriveInfo, RuleInfo, ToolInfo};
+use crate::engine::{self, drive_mount, normalize_slashes};
 use crate::error::{Result, SafaiError};
 use crate::schedule::{self, AutomationStatus, ScheduleConfig};
 use crate::state::SafaiState;
@@ -99,55 +96,7 @@ pub fn cancel_scan(state: State<'_, SafaiState>) {
 pub async fn preview_delete(ids: Vec<String>, state: State<'_, SafaiState>) -> Result<DeletePlan> {
     let roots = state.allowed_roots.lock().unwrap().clone();
     let map = state.last_items.lock().unwrap();
-
-    let mut items: Vec<DeletePlanItem> = Vec::new();
-    let mut total_bytes: u64 = 0;
-    let mut blocked_count: u32 = 0;
-
-    for id in &ids {
-        match map.get(id) {
-            Some(item) => {
-                let path = PathBuf::from(&item.path);
-                let allowed = is_within_allowed(&path, &roots);
-                let reason = if allowed {
-                    None
-                } else {
-                    Some("outside allowed roots".to_string())
-                };
-                if allowed {
-                    total_bytes = total_bytes.saturating_add(item.size_bytes);
-                } else {
-                    blocked_count += 1;
-                }
-                items.push(DeletePlanItem {
-                    id: item.id.clone(),
-                    path: item.path.clone(),
-                    size_bytes: item.size_bytes,
-                    tier: item.tier,
-                    allowed,
-                    reason,
-                });
-            }
-            None => {
-                // Unknown id — never trust it; report it as blocked.
-                blocked_count += 1;
-                items.push(DeletePlanItem {
-                    id: id.clone(),
-                    path: String::new(),
-                    size_bytes: 0,
-                    tier: SafetyTier::Caution,
-                    allowed: false,
-                    reason: Some("item not found in last scan".to_string()),
-                });
-            }
-        }
-    }
-
-    Ok(DeletePlan {
-        items,
-        total_bytes,
-        blocked_count,
-    })
+    Ok(engine::preview_delete(&ids, &map, &roots))
 }
 
 // -------------------------------------------------------------------------

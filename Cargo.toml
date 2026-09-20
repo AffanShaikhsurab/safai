@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/safai-core", "crates/safai-rules", "src-tauri"]
+members = ["crates/safai-core", "crates/safai-rules", "crates/safai-engine", "crates/safai-cli", "src-tauri"]
 
 [workspace.package]
 edition = "2021"

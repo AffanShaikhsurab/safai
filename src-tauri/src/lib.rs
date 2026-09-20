@@ -21,7 +21,6 @@
 //!   quit.
 
 mod commands;
-mod delete_engine;
 mod dto;
 mod engine;
 mod error;

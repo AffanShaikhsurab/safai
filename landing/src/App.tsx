@@ -88,6 +88,9 @@ const App: Component = () => {
             <a class="lp-nav-link" href="#speed">
               Speed
             </a>
+            <a class="lp-nav-link" href="#agents">
+              Agents
+            </a>
             <div
               class="lp-theme"
               role="group"
@@ -277,6 +280,50 @@ const App: Component = () => {
                 Switch to {theme() === "nebula" ? "Void" : "Nebula"}
               </button>
             </div>
+          </div>
+        </section>
+
+        {/* ---- Agents ---- */}
+        <section class="lp-section" id="agents">
+          <div class="lp-col">
+            <div class="sky-eyebrow">Coding agents</div>
+            <div class="sky-display sm">Scan from Cursor or Claude — no UI required.</div>
+            <p class="sky-lede">
+              Build the headless CLI, load the Safai skill, and paste the prompt
+              below. Your agent scans the same junk the app finds. It only deletes
+              after you say yes — Recycle Bin by default.
+            </p>
+            <ol class="lp-agent-steps">
+              <li>
+                <code>cargo build -p safai-cli --release</code>
+              </li>
+              <li>
+                Point the agent at <code>.cursor/skills/safai/</code> or{" "}
+                <code>.claude/skills/safai/</code>
+              </li>
+              <li>Paste this prompt:</li>
+            </ol>
+            <pre class="lp-prompt" tabindex="0">
+{`Use the Safai skill / CLI to check my disk for reclaimable developer junk
+(caches, node_modules, build artifacts).
+
+1. Build or run: cargo run -p safai-cli -- scan --progress
+2. Summarize the largest Safe wins with sizes and item ids.
+3. Do NOT delete anything yet — propose what to clean and wait for my yes.
+4. Only after I approve: safai preview --ids … then
+   safai delete --ids … --token … --yes
+   (Recycle Bin by default; never --permanent unless I ask).
+
+Stay inside Safai's guardrails. Prefer Safe tier. Never invent paths —
+use ids from the scan only.`}
+            </pre>
+            <p class="sky-lede" style={{ "margin-top": "20px", "font-size": "14px" }}>
+              Full details in the{" "}
+              <a href={`${GITHUB}#use-safai-with-your-coding-agent`} style={{ color: "var(--mint-strong)" }}>
+                README
+              </a>
+              .
+            </p>
           </div>
         </section>
 

@@ -19,6 +19,8 @@
     "test:rust": "cargo test --workspace",
     "lint:rust": "cargo clippy --workspace --all-targets -- -D warnings",
     "fmt:check": "cargo fmt --all -- --check",
+    "cli": "cargo run -p safai-cli --",
+    "cli:build": "cargo build -p safai-cli --release",
     "check": "npm run typecheck && npm run test && npm run build && npm run fmt:check && npm run lint:rust && npm run test:rust"
   },
   "dependencies": {
