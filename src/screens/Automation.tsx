@@ -1,6 +1,7 @@
 import { type Component, For, Show, createMemo } from "solid-js";
 import { appStore } from "../state/store";
 import { formatBytes } from "../lib/format";
+import { INACTIVE_DAY_CHOICES } from "../lib/devprojects";
 import {
   eligibleRules,
   formatRelative,
@@ -43,11 +44,8 @@ const AUTO_CATEGORIES: { id: Category; label: string; detail: string }[] = [
     label: "Browser binaries",
     detail: "Playwright downloads, re-fetched on demand.",
   },
-  {
-    id: "buildArtifact",
-    label: "Build artifacts",
-    detail: "node_modules, target, dist — a rebuild brings them back.",
-  },
+  // Build artifacts (node_modules, target, …) have their own inactivity-based
+  // control below rather than a blanket category switch.
   {
     id: "editorStorage",
     label: "Editor storage",
@@ -576,6 +574,60 @@ const Automation: Component = () => {
                 </div>
               )}
             </For>
+
+            <div class="set-row">
+              <div>
+                <div class="rl">Inactive dev projects</div>
+                <div class="rd">
+                  Removes node_modules, Rust target, Gradle/Flutter build
+                  folders, Pods, virtualenvs and similar from projects you
+                  haven't touched in a while — on every drive. One install or
+                  build brings them back.
+                </div>
+              </div>
+              <span
+                class="switch"
+                data-on={cfg()!.devCleanEnabled ? "true" : "false"}
+                role="switch"
+                aria-checked={cfg()!.devCleanEnabled}
+                aria-label="Autopilot may clean inactive dev projects"
+              >
+                <input
+                  type="checkbox"
+                  class="sr-check"
+                  checked={cfg()!.devCleanEnabled}
+                  onChange={(e) =>
+                    void patch({ devCleanEnabled: e.currentTarget.checked })
+                  }
+                />
+              </span>
+            </div>
+
+            <Show when={cfg()!.devCleanEnabled}>
+              <div class="set-row">
+                <div>
+                  <div class="rl">Counts as inactive after</div>
+                  <div class="rd">
+                    Days since the last change to the project's files or git
+                    history. Projects whose activity can't be read are left
+                    alone.
+                  </div>
+                </div>
+                <div class="segmented" role="group" aria-label="Inactive after">
+                  <For each={INACTIVE_DAY_CHOICES}>
+                    {(days) => (
+                      <button
+                        type="button"
+                        data-on={cfg()!.devInactiveDays === days ? "true" : "false"}
+                        onClick={() => void patch({ devInactiveDays: days })}
+                      >
+                        {days} days
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
 
             <div class="set-row">
               <div>

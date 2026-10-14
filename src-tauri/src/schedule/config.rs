@@ -69,6 +69,11 @@ pub const AUTO_CLEAN_HARD_CAP_BYTES: u64 = 200 * 1024 * 1024 * 1024; // 200 GiB
 /// Default cap on how much a single automatic cleanup may remove.
 pub const DEFAULT_MAX_AUTO_CLEAN_BYTES: u64 = 50 * 1024 * 1024 * 1024; // 50 GiB
 
+/// Inactivity bounds for dev-project cleanup, in days.
+pub const DEFAULT_DEV_INACTIVE_DAYS: u32 = 30;
+pub const MIN_DEV_INACTIVE_DAYS: u32 = 7;
+pub const MAX_DEV_INACTIVE_DAYS: u32 = 365;
+
 /// User-facing automation settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -113,6 +118,15 @@ pub struct ScheduleConfig {
     /// Send autopilot deletions to the Recycle Bin (recoverable).
     pub to_recycle_bin: bool,
 
+    // -- Inactive dev projects ------------------------------------------
+    /// Autopilot may remove regenerable dev-project folders (`node_modules`,
+    /// `target`, `.gradle`, …) from projects nobody has worked on for
+    /// `dev_inactive_days`. Independent of the tier/category filters above:
+    /// this switch *is* the consent for that whole family.
+    pub dev_clean_enabled: bool,
+    /// Days without any activity before a project counts as inactive.
+    pub dev_inactive_days: u32,
+
     // -- Presence --------------------------------------------------------
     /// Register the app to launch at logon (hidden, straight to the tray).
     pub autostart: bool,
@@ -143,6 +157,8 @@ impl Default for ScheduleConfig {
             auto_clean_rule_ids: Vec::new(),
             max_auto_clean_bytes: DEFAULT_MAX_AUTO_CLEAN_BYTES,
             to_recycle_bin: true,
+            dev_clean_enabled: false,
+            dev_inactive_days: DEFAULT_DEV_INACTIVE_DAYS,
             autostart: false,
             minimize_to_tray: true,
             notify: true,
@@ -161,6 +177,10 @@ impl ScheduleConfig {
         self.max_auto_clean_bytes = self
             .max_auto_clean_bytes
             .clamp(1024 * 1024, AUTO_CLEAN_HARD_CAP_BYTES);
+        // Under a week is "I was on holiday", not "abandoned".
+        self.dev_inactive_days = self
+            .dev_inactive_days
+            .clamp(MIN_DEV_INACTIVE_DAYS, MAX_DEV_INACTIVE_DAYS);
 
         // `Caution` items are the user's own data (downloaded models, editor
         // state). Autopilot never touches them, and that is not configurable.

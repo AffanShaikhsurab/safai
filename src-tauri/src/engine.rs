@@ -66,9 +66,10 @@ pub fn drive_mount(path: &Path) -> String {
 
 /// Build a [`ScanConfig`] from display roots (empty = the crate's defaults).
 ///
-/// Pattern rules hunt for project artifacts (`node_modules`, `target`, …),
-/// which live in dev folders — not across the whole profile + AppData — so the
-/// project roots come from the rules crate's bounded, targeted list.
+/// Dev-project artifacts (`node_modules`, `target`, `.gradle`, …) can live
+/// anywhere people keep code, so the project walk covers every fixed drive.
+/// The rules crate prunes system/app folders and validates each hit, which is
+/// what keeps a whole-drive walk both fast and safe.
 pub fn build_scan_config(roots: &[String], discover_large_folders: bool) -> ScanConfig {
     let resolved: Vec<PathBuf> = if roots.is_empty() {
         safai_rules::default_roots()
@@ -78,8 +79,53 @@ pub fn build_scan_config(roots: &[String], discover_large_folders: bool) -> Scan
 
     ScanConfig {
         roots: resolved,
-        project_scan_roots: safai_rules::project_scan_roots(),
+        project_scan_roots: dev_scan_roots(),
         discover_large_folders,
+    }
+}
+
+/// Where to hunt for dev projects: every fixed drive, falling back to the user
+/// profile (plus the common dev folders) if drives can't be enumerated.
+pub fn dev_scan_roots() -> Vec<PathBuf> {
+    let drives = crate::winsys::fixed_drives();
+    if !drives.is_empty() {
+        return drives;
+    }
+    let mut roots = safai_rules::project_scan_roots();
+    if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+        if home.is_dir() {
+            // The profile covers the dev folders, so it replaces them.
+            roots = vec![home];
+        }
+    }
+    roots
+}
+
+/// The deletion guardrail for one item.
+///
+/// An item must be inside an allow-listed root (the user profile and the known
+/// cache parents), **or** be a dev-project artifact that still re-validates on
+/// disk right now: a real folder (no symlink/junction), named like an artifact,
+/// with its ecosystem's marker files beside it, outside system/app folders.
+/// That second path is what lets Safai clean `D:\code\app\node_modules`
+/// without opening the whole drive up to deletion.
+///
+/// Dev artifacts are re-validated even inside an allowed root, so a folder
+/// whose project files have since disappeared is left alone.
+pub fn deletion_allowed(item: &CleanupItem, roots: &[PathBuf]) -> bool {
+    let path = Path::new(&item.path);
+    if item.dev.is_some() {
+        return safai_rules::dev::revalidate(path).is_some();
+    }
+    is_within_allowed(path, roots)
+}
+
+/// Why [`deletion_allowed`] refused an item, for the UI.
+pub fn refusal_reason(item: &CleanupItem) -> &'static str {
+    if item.dev.is_some() {
+        "no longer looks like a project build/dependency folder"
+    } else {
+        "outside allowed roots"
     }
 }
 
@@ -168,12 +214,13 @@ pub fn delete_blocking(
             continue;
         }
 
-        // Guardrail: never delete outside an allowed root.
-        if !is_within_allowed(&path, roots) {
+        // Guardrail: never delete outside an allowed root (dev artifacts must
+        // re-validate on disk instead — see `deletion_allowed`).
+        if !deletion_allowed(&item, roots) {
             sink(DeleteEvent::Skipped {
                 id: item.id.clone(),
                 path: item.path.clone(),
-                reason: "outside allowed roots".to_string(),
+                reason: refusal_reason(&item).to_string(),
             });
             skipped_paths.lock().unwrap().push(item.path.clone());
             continue;
@@ -299,6 +346,7 @@ mod tests {
             last_modified_secs: None,
             note: String::new(),
             selected_by_default: true,
+            dev: None,
         }
     }
 

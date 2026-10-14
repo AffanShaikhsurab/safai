@@ -27,6 +27,19 @@ pub struct FastEntry {
     pub size: u64,
     /// Raw file attributes (Windows-specific). 0 on other platforms.
     pub attributes: u32,
+    /// Last-write time as unix seconds, or 0 when unknown. On Windows this
+    /// comes straight from the directory listing (no extra syscall).
+    pub modified_secs: u64,
+}
+
+/// Convert a Windows FILETIME (100ns ticks since 1601-01-01) to unix seconds.
+/// Returns 0 for times before the unix epoch.
+#[cfg(windows)]
+fn filetime_to_unix(low: u32, high: u32) -> u64 {
+    const TICKS_PER_SEC: u64 = 10_000_000;
+    const EPOCH_DIFF_SECS: u64 = 11_644_473_600;
+    let ticks = ((high as u64) << 32) | (low as u64);
+    (ticks / TICKS_PER_SEC).saturating_sub(EPOCH_DIFF_SECS)
 }
 
 /// Read all entries in a directory using the fastest available platform method.
@@ -149,6 +162,10 @@ fn read_dir_win32(dir: &Path) -> Vec<FastEntry> {
                 is_symlink,
                 size,
                 attributes: attrs,
+                modified_secs: filetime_to_unix(
+                    find_data.ftLastWriteTime[0],
+                    find_data.ftLastWriteTime[1],
+                ),
             });
         }
 
@@ -203,11 +220,17 @@ fn read_dir_std(dir: &Path) -> Vec<FastEntry> {
             Ok(ft) => ft,
             Err(_) => continue,
         };
+        let md = entry.metadata().ok();
         let size = if ft.is_file() {
-            entry.metadata().map(|m| m.len()).unwrap_or(0)
+            md.as_ref().map(|m| m.len()).unwrap_or(0)
         } else {
             0
         };
+        let modified_secs = md
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
         entries.push(FastEntry {
             path: entry.path(),
@@ -215,6 +238,7 @@ fn read_dir_std(dir: &Path) -> Vec<FastEntry> {
             is_symlink: ft.is_symlink(),
             size,
             attributes: 0,
+            modified_secs,
         });
     }
 

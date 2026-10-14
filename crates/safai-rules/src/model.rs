@@ -48,6 +48,29 @@ pub struct CleanupItem {
     pub last_modified_secs: Option<u64>, // unix secs; for staleness sorting
     pub note: String,                    // why it's safe / what happens if removed
     pub selected_by_default: bool,
+    /// Present only for dev-project artifacts (`node_modules`, `target`, …):
+    /// which project the folder belongs to and when that project was last
+    /// worked on. `None` for every other finding.
+    #[serde(default)]
+    pub dev: Option<DevInfo>,
+}
+
+/// Project context for a dev artifact (see `crate::dev`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevInfo {
+    /// The project's root folder (git root when there is one), display path.
+    pub project_root: String,
+    /// Folder name of the project root, for display.
+    pub project_name: String,
+    /// Best guess at what the project is ("React Native", "Flutter", "Rust"…).
+    pub project_kind: String,
+    /// Ecosystem this particular artifact belongs to ("Node.js", "Gradle"…).
+    pub ecosystem: String,
+    /// Unix seconds of the newest sign of work in the project (source files,
+    /// git activity), ignoring the artifact folders themselves. `None` when it
+    /// couldn't be determined — such projects are never auto-cleaned.
+    pub last_active_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +102,9 @@ pub struct ScanReport {
     tag = "event",
     content = "data"
 )]
+// `Found` carries a whole item; events are short-lived IPC payloads, so the
+// size difference between variants doesn't matter.
+#[allow(clippy::large_enum_variant)]
 pub enum ScanEvent {
     Started {
         roots: Vec<String>,

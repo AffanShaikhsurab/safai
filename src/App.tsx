@@ -1,6 +1,11 @@
 import { Switch, Match, Show, onMount, type Component, type JSX } from "solid-js";
 import { appStore } from "./state/store";
-import { loadScanPrefs, loadSkyPrefs, loadTheme } from "./lib/prefs";
+import {
+  loadDevInactiveDays,
+  loadScanPrefs,
+  loadSkyPrefs,
+  loadTheme,
+} from "./lib/prefs";
 import { ensureNotifyPermission } from "./lib/notify";
 import { layoutFamily } from "./lib/layout";
 import PixelSky from "./components/PixelSky";
@@ -60,6 +65,7 @@ const App: Component = () => {
     appStore.setSkyPrefs(await loadSkyPrefs());
     appStore.setTheme(await loadTheme());
     appStore.setScanPrefs(await loadScanPrefs());
+    appStore.setDevInactiveDays(await loadDevInactiveDays(), false);
     // Restore the last scan report so the Overview breakdown persists across
     // restarts (KPI stats are hydrated in Dashboard.onMount).
     void appStore.hydrateLastReport();

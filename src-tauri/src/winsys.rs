@@ -79,6 +79,37 @@ pub fn disk_free_total(_path: &Path) -> Option<(u64, u64)> {
     None
 }
 
+/// Root paths (`C:\`, `D:\`, …) of every local fixed drive.
+///
+/// Removable, network, optical and RAM drives are left out on purpose: the
+/// dev-project scan walks whole drives, and a USB stick or network share is
+/// slow to walk and not where anyone keeps an active `node_modules`.
+#[cfg(windows)]
+pub fn fixed_drives() -> Vec<std::path::PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
+    const DRIVE_FIXED: u32 = 3;
+
+    // SAFETY: takes no arguments; returns a bitmask of present drive letters.
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u32)
+        .filter(|bit| mask & (1 << bit) != 0)
+        .filter_map(|bit| {
+            let letter = char::from(b'A' + bit as u8);
+            let root = format!("{letter}:\\");
+            let wide: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+            // SAFETY: `wide` is a valid, null-terminated UTF-16 root path that
+            // outlives the call; the API only reads it.
+            let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
+            (kind == DRIVE_FIXED).then(|| std::path::PathBuf::from(root))
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+pub fn fixed_drives() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
 /// Percentage of the volume containing `path` that is in use (0–100), or
 /// `None` if the volume can't be queried or reports a zero size.
 pub fn disk_used_percent(path: &Path) -> Option<f64> {

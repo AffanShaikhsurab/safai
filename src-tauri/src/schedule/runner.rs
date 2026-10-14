@@ -886,6 +886,7 @@ mod tests {
             last_modified_secs: None,
             note: String::new(),
             selected_by_default: true,
+            dev: None,
         }
     }
 

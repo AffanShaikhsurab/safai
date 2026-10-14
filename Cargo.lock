@@ -3166,6 +3166,7 @@ dependencies = [
 name = "safai-rules"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "safai-core",
  "serde",
  "serde_json",

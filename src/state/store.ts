@@ -35,6 +35,12 @@ import {
   stopAutomation,
 } from "../lib/tauri";
 import { loadLastReport, saveLastReport } from "../lib/report";
+import {
+  DEFAULT_INACTIVE_DAYS,
+  groupProjects,
+  selectionForThreshold,
+} from "../lib/devprojects";
+import { saveDevInactiveDays } from "../lib/prefs";
 import { isUiEngaged, shouldParkAtResults } from "../lib/automation";
 import {
   applyThemeClass,
@@ -111,6 +117,11 @@ export interface AppState {
   automation: AutomationStatus | null;
   /** The cleanup rule table, for the autopilot allow-list. Lazy-loaded. */
   rules: RuleInfo[];
+  /**
+   * Review-screen threshold: dev projects idle at least this many days have
+   * their node_modules/target/… pre-selected (persisted).
+   */
+  devInactiveDays: number;
 }
 
 function emptyProgress(): Progress {
@@ -147,6 +158,7 @@ function createAppStore() {
     scanStartedAt: 0,
     automation: null,
     rules: [],
+    devInactiveDays: DEFAULT_INACTIVE_DAYS,
   });
 
   // Keep the backend's view of "the user is busy" in sync with the flow, so the
@@ -181,6 +193,37 @@ function createAppStore() {
       0,
     ),
   );
+
+  // ---- Dev projects ----
+
+  /** Select dev artifacts of projects idle ≥ the threshold, deselect the rest. */
+  function applyDevThreshold() {
+    const projects = groupProjects(allItems(), Math.floor(Date.now() / 1000));
+    const next = selectionForThreshold(projects, state.devInactiveDays);
+    setState(
+      produce((s) => {
+        for (const [id, on] of Object.entries(next)) s.selected[id] = on;
+      }),
+    );
+  }
+
+  /** Change the inactivity threshold and re-apply it to the current report. */
+  function setDevInactiveDays(days: number, persist = true) {
+    setState("devInactiveDays", days);
+    if (persist) void saveDevInactiveDays(days);
+    applyDevThreshold();
+  }
+
+  /** Toggle every artifact of one project. */
+  function toggleProject(root: string, on: boolean) {
+    setState(
+      produce((s) => {
+        for (const item of allItems()) {
+          if (item.dev?.projectRoot === root) s.selected[item.id] = on;
+        }
+      }),
+    );
+  }
 
   // ---- Actions ----
   function setPhase(phase: Phase) {
@@ -371,6 +414,7 @@ function createAppStore() {
         s.phase = "results";
       }),
     );
+    applyDevThreshold();
     const itemCount = report.groups.reduce((n, g) => n + g.items.length, 0);
     recordScan(report.totalReclaimableBytes, itemCount);
     // Persist the report locally so the Dashboard breakdown survives a restart.
@@ -605,6 +649,7 @@ function createAppStore() {
         }
       }),
     );
+    applyDevThreshold();
 
     const itemCount = report.groups.reduce((n, g) => n + g.items.length, 0);
     recordScan(report.totalReclaimableBytes, itemCount);
@@ -713,6 +758,8 @@ function createAppStore() {
     toggleItem,
     toggleCategory,
     selectByTier,
+    toggleProject,
+    setDevInactiveDays,
     // roots / tools / drive
     setRoots,
     addRoot,

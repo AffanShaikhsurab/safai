@@ -4,6 +4,7 @@
 
 import { load, type Store } from "@tauri-apps/plugin-store";
 import { DEFAULT_SKY as SKY_DEFAULTS, normalizeSky, type SkyPrefs } from "./sky";
+import { DEFAULT_INACTIVE_DAYS, normalizeInactiveDays } from "./devprojects";
 
 /**
  * Themes the user can pick in Settings → Appearance.
@@ -20,6 +21,7 @@ const KEY = "theme";
 const KEY_DEEP = "deepScan";
 const KEY_RECYCLE = "toRecycleBin";
 const KEY_SKY = "sky";
+const KEY_DEV_DAYS = "devInactiveDays";
 
 let storePromise: Promise<Store> | null = null;
 function getStore(): Promise<Store> {
@@ -130,6 +132,26 @@ export async function loadScanPrefs(): Promise<ScanPrefs> {
     };
   } catch {
     return { ...DEFAULT_SCAN_PREFS };
+  }
+}
+
+/** Review-screen inactivity threshold for dev projects, in days. */
+export async function loadDevInactiveDays(): Promise<number> {
+  try {
+    const store = await getStore();
+    return normalizeInactiveDays(await store.get<number>(KEY_DEV_DAYS));
+  } catch {
+    return DEFAULT_INACTIVE_DAYS;
+  }
+}
+
+export async function saveDevInactiveDays(days: number): Promise<void> {
+  try {
+    const store = await getStore();
+    await store.set(KEY_DEV_DAYS, days);
+    await store.save();
+  } catch {
+    // Non-fatal.
   }
 }
 

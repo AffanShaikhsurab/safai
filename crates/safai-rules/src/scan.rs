@@ -11,7 +11,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::detect::{detect_tools, display_path, expand};
-use crate::model::{Category, CategoryGroup, CleanupItem, SafetyTier, ScanEvent, ScanReport};
+use crate::dev::{self, DevArtifact};
+use crate::model::{
+    Category, CategoryGroup, CleanupItem, DevInfo, SafetyTier, ScanEvent, ScanReport,
+};
 use crate::rules::{all_rules, CleanupRule};
 
 /// Configuration for a scan run.
@@ -169,40 +172,19 @@ fn last_modified_secs(path: &Path) -> Option<u64> {
 /// How often the streaming sizing loop republishes progress to the UI.
 const SIZE_PROGRESS_INTERVAL: Duration = Duration::from_millis(120);
 
-/// Maximum depth (relative to each project scan root) the pattern-discovery
-/// walk descends. Artifact directories (`node_modules`, `target`, build dirs)
-/// sit only a few levels below a project root, so a modest cap keeps the walk
-/// bounded without missing real matches — and prevents it from crawling deep,
-/// unrelated trees (which is what made scans appear to "hang").
-const PROJECT_SCAN_MAX_DEPTH: usize = 8;
-
-/// Wall-clock safety budget for the pattern-discovery walk. If discovery is
-/// still running after this, it stops and records a warning. This guarantees
-/// the walk can never hang the scan, mirroring `SIZE_TIME_BUDGET` for sizing.
-const WALK_TIME_BUDGET: Duration = Duration::from_secs(45);
-
-/// Directory names the pattern-discovery walk will report but never descend
-/// into. These are large and/or irrelevant to project-artifact discovery:
-/// `appdata` is huge and already swept one level deep as its own roots; VCS and
-/// system folders never usefully contain the artifact dirs we hunt for.
-/// Everything here is matched case-insensitively against the directory name.
-const SKIP_DESCEND_NAMES: &[&str] = &[
-    "appdata",
-    ".git",
-    ".hg",
-    ".svn",
-    "$recycle.bin",
-    "windows",
-    "system volume information",
-];
+/// Wall-clock safety budget for the dev-project discovery walk (whole drives,
+/// in parallel). If discovery is still running after this, it stops and
+/// records a warning, so the walk can never hang the scan.
+const WALK_TIME_BUDGET: Duration = Duration::from_secs(120);
 
 /// Safety net: if sizing a single directory exceeds this budget, stop walking
 /// it and report the partial size (with a warning). This guarantees the scan
 /// can never hang indefinitely on a pathological tree (a giant model cache on a
 /// slow disk, a network mount, a reparse-point maze, etc.). Sized generously so
-/// it rarely triggers on normal local caches — the live progress below is the
-/// primary "it's not stuck" signal.
-const SIZE_TIME_BUDGET: Duration = Duration::from_secs(90);
+/// it rarely triggers — dozens of `node_modules` folders across a whole disk
+/// are millions of files — and the live progress below is the primary "it's
+/// not stuck" signal.
+const SIZE_TIME_BUDGET: Duration = Duration::from_secs(180);
 
 /// Measure a file's length. Directories are handled by [`measure_dir_streaming`].
 fn measure_file(path: &Path) -> u64 {
@@ -228,6 +210,8 @@ struct PendingDir {
     /// Large-folder discovery items get post-sizing filtering (min size,
     /// overlap dedup, count cap); rule-based items are always surfaced.
     is_large_folder: bool,
+    /// Project context for dev artifacts.
+    dev: Option<DevInfo>,
 }
 
 /// Size every directory job in `paths` **concurrently** in one shared
@@ -358,6 +342,98 @@ fn size_dirs_with_progress(
     }
 }
 
+/// Run [`dev::discover`] on a worker while this thread streams live progress
+/// (the walk itself is parallel and can't call the non-`Sync` sink).
+fn discover_with_progress(
+    roots: &[PathBuf],
+    cancel: &AtomicBool,
+    found_bytes: u64,
+    on_event: &mut dyn FnMut(ScanEvent),
+) -> (Vec<DevArtifact>, bool) {
+    let dirs_seen = AtomicU64::new(0);
+    let deadline = Instant::now() + WALK_TIME_BUDGET;
+    std::thread::scope(|s| {
+        let dirs_ref = &dirs_seen;
+        let handle = s.spawn(move || dev::discover(roots, cancel, Some(deadline), dirs_ref));
+        while !handle.is_finished() {
+            std::thread::sleep(SIZE_PROGRESS_INTERVAL);
+            on_event(ScanEvent::Progress {
+                current_path: format!(
+                    "Looking for dev projects… ({} folders)",
+                    dirs_seen.load(Ordering::Relaxed)
+                ),
+                found_bytes,
+                rules_checked: 0,
+                rules_total: 0,
+            });
+        }
+        handle.join().unwrap_or_default()
+    })
+}
+
+/// Attach project context to each artifact: project root, kind, and last
+/// activity. Activity is computed once per project, in parallel.
+fn describe_projects(artifacts: Vec<DevArtifact>) -> Vec<(DevArtifact, DevInfo)> {
+    use rayon::prelude::*;
+    use std::collections::HashMap;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Resolve each artifact's project, dropping any folder the project's git
+    // repo actually tracks (committed fixtures / vendored deps are source).
+    let rooted: Vec<(DevArtifact, PathBuf)> = artifacts
+        .into_par_iter()
+        .filter_map(|a| {
+            let root = dev::project_root_for(&a.path);
+            if root.join(".git").exists() && dev::is_tracked_by_git(&root, &a.path) {
+                return None;
+            }
+            Some((a, root))
+        })
+        .collect();
+
+    // One activity probe per distinct project root.
+    let mut roots: Vec<(PathBuf, &'static str)> = Vec::new();
+    for (a, root) in &rooted {
+        if !roots.iter().any(|(r, _)| r == root) {
+            roots.push((root.clone(), a.spec.ecosystem));
+        }
+    }
+    let infos: HashMap<PathBuf, (String, Option<u64>)> = roots
+        .into_par_iter()
+        .map(|(root, eco)| {
+            let kind = dev::project_kind(&root, eco);
+            let active = dev::last_active_secs(&root, now);
+            (root, (kind, active))
+        })
+        .collect();
+
+    rooted
+        .into_iter()
+        .map(|(a, root)| {
+            let (kind, active) = infos
+                .get(&root)
+                .cloned()
+                .unwrap_or_else(|| (a.spec.ecosystem.to_string(), None));
+            let name = root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| display_path(&root));
+            let info = DevInfo {
+                project_root: display_path(&root),
+                project_name: name,
+                project_kind: kind,
+                ecosystem: a.spec.ecosystem.to_string(),
+                last_active_secs: active,
+            };
+            (a, info)
+        })
+        .collect()
+}
+
 /// Run the rules-based scan.
 ///
 /// Emits [`ScanEvent`]s through `on_event` and returns the aggregated
@@ -395,16 +471,12 @@ pub fn run_scan(
     // Partition rules; count only rules that will actually be processed so the
     // progress denominator is meaningful.
     let mut fixed_rules: Vec<&CleanupRule> = Vec::new();
-    let mut pattern_rules: Vec<&CleanupRule> = Vec::new();
     for rule in &rules {
-        if rule.pattern.is_some() {
-            pattern_rules.push(rule);
-        } else {
-            // Gate fixed rules on their required tool (if any).
-            let gated_out = matches!(rule.requires_tool, Some(tool) if !tool_detected(tool));
-            if !gated_out {
-                fixed_rules.push(rule);
-            }
+        // Gate fixed rules on their required tool (if any). Pattern rules are
+        // no longer part of the table — dev artifacts come from `crate::dev`.
+        let gated_out = matches!(rule.requires_tool, Some(tool) if !tool_detected(tool));
+        if rule.pattern.is_none() && !gated_out {
+            fixed_rules.push(rule);
         }
     }
     // Enumerate generic large-folder candidates up front (cheap `read_dir`, no
@@ -449,6 +521,7 @@ pub fn run_scan(
                         note: rule.note.to_string(),
                         selected_by_default: rule.tier == SafetyTier::Safe,
                         is_large_folder: false,
+                        dev: None,
                     });
                 } else {
                     // A file (e.g. `state.vscdb`): measure inline.
@@ -465,6 +538,7 @@ pub fn run_scan(
                         last_modified_secs: last_modified_secs(&path),
                         note: rule.note.to_string(),
                         selected_by_default: rule.tier == SafetyTier::Safe,
+                        dev: None,
                     };
                     found_bytes = found_bytes.saturating_add(size);
                     on_event(ScanEvent::Found { item: item.clone() });
@@ -474,106 +548,43 @@ pub fn run_scan(
         }
     }
 
-    // Pattern rules: one pruned walk to discover artifact directories.
-    if !pattern_rules.is_empty() && !cfg.project_scan_roots.is_empty() {
+    // Dev projects: walk the project roots (whole drives in the app) for
+    // validated artifact folders, then work out which project each belongs to
+    // and when that project was last worked on.
+    if !cfg.project_scan_roots.is_empty() && !cancel.load(Ordering::Relaxed) {
+        let (artifacts, timed_out) =
+            discover_with_progress(&cfg.project_scan_roots, cancel, found_bytes, on_event);
+        if timed_out {
+            warnings.push(format!(
+                "Project scan stopped after {}s; some project folders may not be listed.",
+                WALK_TIME_BUDGET.as_secs()
+            ));
+        }
         on_event(ScanEvent::Progress {
-            current_path: "Scanning projects…".to_string(),
+            current_path: format!(
+                "Checking when {} project folder{} were last used…",
+                artifacts.len(),
+                if artifacts.len() == 1 { "" } else { "s" }
+            ),
             found_bytes,
             rules_checked: 0,
             rules_total: 0,
         });
-
-        let mut matches: Vec<PathBuf> = Vec::new();
-        let walk_timed_out;
-        {
-            let is_target_name = |name: &str| -> bool {
-                pattern_rules.iter().any(|r| {
-                    r.pattern
-                        .as_ref()
-                        .map(|p| p.names.contains(&name))
-                        .unwrap_or(false)
-                })
-            };
-            // Don't descend into artifact dirs (their contents are what we're
-            // measuring, not searching) nor into the heavy/irrelevant folders
-            // in `SKIP_DESCEND_NAMES`. Matched directories are still reported.
-            let prune = |path: &Path| -> bool {
-                match path.file_name().and_then(|n| n.to_str()) {
-                    Some(name) => {
-                        if is_target_name(name) {
-                            return true;
-                        }
-                        let low = name.to_ascii_lowercase();
-                        SKIP_DESCEND_NAMES.contains(&low.as_str())
-                    }
-                    None => false,
-                }
-            };
-            // Throttled progress: `walk_pruned` reports every directory it
-            // sees, so we count them and republish a live Progress event at
-            // most every `SIZE_PROGRESS_INTERVAL`. This is what keeps the UI
-            // moving during discovery instead of appearing frozen.
-            let mut last_emit = Instant::now();
-            let mut dirs_seen: u64 = 0;
-            let mut on_dir = |path: &Path| {
-                dirs_seen += 1;
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if is_target_name(name) {
-                        matches.push(path.to_path_buf());
-                    }
-                }
-                if last_emit.elapsed() >= SIZE_PROGRESS_INTERVAL {
-                    last_emit = Instant::now();
-                    on_event(ScanEvent::Progress {
-                        current_path: format!("Scanning projects… ({dirs_seen} folders)"),
-                        found_bytes,
-                        rules_checked: 0,
-                        rules_total: 0,
-                    });
-                }
-            };
-            let opts = safai_core::WalkOptions {
-                max_depth: Some(PROJECT_SCAN_MAX_DEPTH),
-                deadline: Some(Instant::now() + WALK_TIME_BUDGET),
-            };
-            walk_timed_out =
-                safai_core::walk_pruned(&cfg.project_scan_roots, cancel, opts, &prune, &mut on_dir);
-        }
-
-        if walk_timed_out {
-            warnings.push(format!(
-                "Project scan stopped after {}s; some artifact folders may not be listed.",
-                WALK_TIME_BUDGET.as_secs()
-            ));
-        }
-
-        for matched in matches {
-            let name = match matched.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n,
-                None => continue,
-            };
-            let rule = pattern_rules.iter().find(|r| {
-                r.pattern
-                    .as_ref()
-                    .map(|p| p.names.contains(&name))
-                    .unwrap_or(false)
-            });
-            let rule = match rule {
-                Some(r) => r,
-                None => continue,
-            };
-            let disp = display_path(&matched);
+        for (artifact, dev) in describe_projects(artifacts) {
+            let spec = artifact.spec;
             dir_jobs.push(PendingDir {
-                path: matched.clone(),
-                disp,
-                rule_id: rule.id.to_string(),
-                label: rule.label.to_string(),
-                category: rule.category,
-                tier: rule.tier,
-                regenerates: rule.regenerates,
-                note: rule.note.to_string(),
-                selected_by_default: rule.tier == SafetyTier::Safe,
+                disp: display_path(&artifact.path),
+                path: artifact.path,
+                rule_id: spec.rule_id.to_string(),
+                label: format!("{} · {}", dev.project_name, spec.label),
+                category: Category::BuildArtifact,
+                tier: SafetyTier::Review,
+                regenerates: true,
+                note: spec.note.to_string(),
+                // The UI pre-selects by inactivity threshold instead.
+                selected_by_default: false,
                 is_large_folder: false,
+                dev: Some(dev),
             });
         }
     }
@@ -629,6 +640,7 @@ pub fn run_scan(
                 .to_string(),
             selected_by_default: false,
             is_large_folder: true,
+            dev: None,
         });
     }
 
@@ -680,6 +692,7 @@ pub fn run_scan(
                 last_modified_secs: last_modified_secs(&job.path),
                 note: job.note.clone(),
                 selected_by_default: job.selected_by_default,
+                dev: job.dev.clone(),
             };
             items.push(item.clone());
             Some(item)
@@ -770,6 +783,11 @@ mod tests {
         let mut f = File::create(pkg.join("a.bin")).expect("file");
         f.write_all(&[0u8; 30]).expect("write");
         drop(f); // Flush and close before scanning.
+                 // A real project: manifest + lockfile next to node_modules.
+        fs::write(root.join("proj").join("package.json"), b"{}").expect("manifest");
+        fs::write(root.join("proj").join("package-lock.json"), b"{}").expect("lock");
+        fs::create_dir_all(root.join("proj").join("src")).expect("src");
+        fs::write(root.join("proj").join("src").join("index.js"), b"1").expect("src file");
 
         let cfg = ScanConfig {
             roots: vec![root.clone()],
@@ -800,6 +818,11 @@ mod tests {
         assert_eq!(nm_items[0].category, Category::BuildArtifact);
         assert_eq!(nm_items[0].tier, SafetyTier::Review);
         assert!(!nm_items[0].selected_by_default);
+        // Project context is attached, with activity from the source file.
+        let dev = nm_items[0].dev.as_ref().expect("dev info");
+        assert_eq!(dev.project_name, "proj");
+        assert_eq!(dev.ecosystem, "Node.js");
+        assert!(dev.last_active_secs.is_some());
         // The build-artifact bytes contribute to the reclaimable total.
         assert!(report.total_reclaimable_bytes >= 30);
     }

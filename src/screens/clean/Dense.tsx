@@ -2,6 +2,7 @@ import { type Component, For, Show } from "solid-js";
 import { appStore } from "../../state/store";
 import { formatBytes, relativeTime } from "../../lib/format";
 import { useClean } from "./model";
+import { ProjectsDense } from "./Projects";
 
 const TICK = (
   <svg
@@ -42,7 +43,8 @@ const CleanDense: Component<{ onRequestClean: () => void }> = (props) => {
 
   return (
     <>
-      <div class="dense-panel" style={{ "margin-top": "0" }}>
+      <ProjectsDense />
+      <div class="dense-panel">
         <div class="dense-phead">
           Findings — all paths, largest first
           <span class="r">{formatBytes(m.report()?.totalReclaimableBytes ?? 0)}</span>
@@ -152,7 +154,9 @@ const CleanDense: Component<{ onRequestClean: () => void }> = (props) => {
       {/* Sticky within the scroll region so the table can be long. */}
       <div class="dense-foot sticky">
         <span>
-          {m.selectedCount()} of {m.flat().length} selected
+          {m.selectedCount()} of{" "}
+          {m.flat().length + m.projects().reduce((n, p) => n + p.items.length, 0)}{" "}
+          selected
         </span>
         <span class="mono">{formatBytes(m.selectedBytes())}</span>
         <div class="grow" />

@@ -3,6 +3,7 @@ import { appStore } from "../../state/store";
 import { formatBytes, relativeTime } from "../../lib/format";
 import { openPath } from "../../lib/tauri";
 import { useClean } from "./model";
+import { ProjectsSky } from "./Projects";
 
 /**
  * Clean · review, `sky` family.
@@ -36,6 +37,8 @@ const CleanSky: Component<{ onRequestClean: () => void }> = (props) => {
         before you commit — <b>{formatBytes(m.report()?.totalReclaimableBytes ?? 0)}</b>{" "}
         is available in total.
       </p>
+
+      <ProjectsSky />
 
       <div class="sky-sec">
         <h3>FINDINGS</h3>

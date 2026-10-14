@@ -25,6 +25,20 @@ export interface CleanupItem {
   lastModifiedSecs: number | null;
   note: string;
   selectedByDefault: boolean;
+  /** Project context, only for dev-project artifacts (node_modules, target…). */
+  dev?: DevInfo | null;
+}
+
+/** Mirrors Rust `DevInfo`: which project a dev artifact belongs to. */
+export interface DevInfo {
+  projectRoot: string;
+  projectName: string;
+  /** "React Native", "Flutter", "Rust"… */
+  projectKind: string;
+  /** Ecosystem of this artifact ("Node.js", "Gradle / Android"…). */
+  ecosystem: string;
+  /** Newest sign of work in the project (unix secs); null = unknown. */
+  lastActiveSecs: number | null;
 }
 
 export interface CategoryGroup {
@@ -153,6 +167,12 @@ export interface ScheduleConfig {
   autoCleanRuleIds: string[];
   maxAutoCleanBytes: number;
   toRecycleBin: boolean;
+
+  // Inactive dev projects.
+  /** Autopilot may remove node_modules/target/… from inactive projects. */
+  devCleanEnabled: boolean;
+  /** Days without activity before a project counts as inactive (7–365). */
+  devInactiveDays: number;
 
   // Presence.
   autostart: boolean;

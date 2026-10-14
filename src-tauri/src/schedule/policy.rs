@@ -17,12 +17,23 @@
 //!    big, we don't know what it is" findings; they are never auto-removable.
 //! 6. If the user narrowed things to specific rule ids, it's one of them.
 //!
+//! Dev-project artifacts (`node_modules`, `target`, …) take a separate path,
+//! gated by their own switch instead of the tier/category filters:
+//!
+//! * `dev_clean_enabled` is on,
+//! * the item carries project context (it was validated against its
+//!   ecosystem's marker files during the scan),
+//! * the project's last activity is **known** and at least
+//!   `dev_inactive_days` old. Unknown activity is never treated as inactive.
+//!
+//! Any other `BuildArtifact` finding is never auto-removed.
+//!
 //! Whatever survives is then sorted largest-first and accumulated up to
 //! `max_auto_clean_bytes`, so a capped run still frees the most space it can.
 
-use safai_rules::{CleanupItem, SafetyTier, ScanReport};
+use safai_rules::{Category, CleanupItem, SafetyTier, ScanReport};
 
-use super::config::ScheduleConfig;
+use super::config::{now_secs, ScheduleConfig};
 
 /// `rule_id` used by the scan's generic "this folder is big" discovery pass.
 /// Never eligible for automatic deletion.
@@ -47,11 +58,29 @@ impl AutoCleanPlan {
     }
 }
 
-/// Is this single item eligible for automatic deletion under `cfg`?
-pub fn is_auto_eligible(item: &CleanupItem, cfg: &ScheduleConfig) -> bool {
+/// Has the dev project behind `item` been idle for the configured threshold?
+pub fn is_inactive_dev_artifact(item: &CleanupItem, cfg: &ScheduleConfig, now: u64) -> bool {
+    let Some(dev) = &item.dev else {
+        return false;
+    };
+    let Some(last_active) = dev.last_active_secs else {
+        return false;
+    };
+    let threshold = u64::from(cfg.dev_inactive_days) * 86_400;
+    now.saturating_sub(last_active) >= threshold
+}
+
+/// Is this single item eligible for automatic deletion under `cfg` at `now`?
+pub fn is_auto_eligible(item: &CleanupItem, cfg: &ScheduleConfig, now: u64) -> bool {
     // (1) Absolute floor — user data is never auto-removed.
     if item.tier == SafetyTier::Caution {
         return false;
+    }
+    // Dev-project artifacts: their own switch + inactivity threshold.
+    if item.category == Category::BuildArtifact {
+        return cfg.dev_clean_enabled
+            && item.regenerates
+            && is_inactive_dev_artifact(item, cfg, now);
     }
     // (2) + (3) Within the user's chosen tiers and categories.
     if !cfg.auto_clean_tiers.contains(&item.tier) {
@@ -77,12 +106,17 @@ pub fn is_auto_eligible(item: &CleanupItem, cfg: &ScheduleConfig) -> bool {
 
 /// Build the autopilot deletion plan for a finished scan.
 pub fn select_auto_clean(report: &ScanReport, cfg: &ScheduleConfig) -> AutoCleanPlan {
+    select_auto_clean_at(report, cfg, now_secs())
+}
+
+/// [`select_auto_clean`] with an explicit clock, for tests.
+pub fn select_auto_clean_at(report: &ScanReport, cfg: &ScheduleConfig, now: u64) -> AutoCleanPlan {
     let mut plan = AutoCleanPlan::default();
 
     let mut eligible: Vec<CleanupItem> = Vec::new();
     for group in &report.groups {
         for item in &group.items {
-            if is_auto_eligible(item, cfg) {
+            if is_auto_eligible(item, cfg, now) {
                 eligible.push(item.clone());
             } else {
                 plan.excluded_by_policy += 1;
@@ -131,7 +165,78 @@ mod tests {
             last_modified_secs: None,
             note: String::new(),
             selected_by_default: tier == SafetyTier::Safe,
+            dev: None,
         }
+    }
+
+    const DAY: u64 = 86_400;
+    const NOW: u64 = 1_800_000_000;
+
+    fn dev_item(id: &str, idle_days: Option<u64>) -> CleanupItem {
+        CleanupItem {
+            dev: Some(safai_rules::DevInfo {
+                project_root: format!("C:/code/{id}"),
+                project_name: id.to_string(),
+                project_kind: "Node.js".to_string(),
+                ecosystem: "Node.js".to_string(),
+                last_active_secs: idle_days.map(|d| NOW - d * DAY),
+            }),
+            ..item(
+                id,
+                "node-modules",
+                Category::BuildArtifact,
+                SafetyTier::Review,
+                1000,
+                true,
+            )
+        }
+    }
+
+    #[test]
+    fn dev_artifacts_need_the_switch_and_enough_inactivity() {
+        let items = vec![
+            dev_item("old", Some(45)),
+            dev_item("recent", Some(3)),
+            dev_item("edge", Some(30)),
+            dev_item("unknown", None),
+        ];
+        // Switch off: nothing, even though "old" is well past the threshold.
+        let off = ScheduleConfig::default();
+        assert!(select_auto_clean_at(&report(items.clone()), &off, NOW).is_empty());
+
+        let on = ScheduleConfig {
+            dev_clean_enabled: true,
+            dev_inactive_days: 30,
+            ..Default::default()
+        };
+        let plan = select_auto_clean_at(&report(items), &on, NOW);
+        let mut ids: Vec<&str> = plan.items.iter().map(|i| i.id.as_str()).collect();
+        ids.sort();
+        // Unknown activity is never treated as inactive.
+        assert_eq!(ids, vec!["edge", "old"]);
+    }
+
+    #[test]
+    fn build_artifacts_without_project_context_are_never_auto_cleaned() {
+        let cfg = ScheduleConfig {
+            dev_clean_enabled: true,
+            auto_clean_categories: vec![Category::BuildArtifact],
+            auto_clean_tiers: vec![SafetyTier::Safe, SafetyTier::Review],
+            ..Default::default()
+        };
+        let plan = select_auto_clean_at(
+            &report(vec![item(
+                "loose",
+                "node-modules",
+                Category::BuildArtifact,
+                SafetyTier::Review,
+                10,
+                true,
+            )]),
+            &cfg,
+            NOW,
+        );
+        assert!(plan.is_empty());
     }
 
     fn report(items: Vec<CleanupItem>) -> ScanReport {

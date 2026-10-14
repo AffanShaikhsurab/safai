@@ -20,7 +20,7 @@ use crate::dto::{
     DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveInfo, RuleInfo, SafetyTier,
     ToolInfo,
 };
-use crate::engine::{self, drive_mount, is_within_allowed, normalize_slashes};
+use crate::engine::{self, deletion_allowed, drive_mount, normalize_slashes};
 use crate::error::{Result, SafaiError};
 use crate::schedule::{self, AutomationStatus, ScheduleConfig};
 use crate::state::SafaiState;
@@ -107,12 +107,11 @@ pub async fn preview_delete(ids: Vec<String>, state: State<'_, SafaiState>) -> R
     for id in &ids {
         match map.get(id) {
             Some(item) => {
-                let path = PathBuf::from(&item.path);
-                let allowed = is_within_allowed(&path, &roots);
+                let allowed = deletion_allowed(item, &roots);
                 let reason = if allowed {
                     None
                 } else {
-                    Some("outside allowed roots".to_string())
+                    Some(engine::refusal_reason(item).to_string())
                 };
                 if allowed {
                     total_bytes = total_bytes.saturating_add(item.size_bytes);
