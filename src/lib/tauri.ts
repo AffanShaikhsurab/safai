@@ -10,25 +10,28 @@ import type {
   DeleteEvent,
   DeletePlan,
   DeleteReport,
+  DriveEntry,
   DriveInfo,
   RuleInfo,
   ScanEvent,
   ScanReport,
+  ScanRequest,
   ScheduleConfig,
   ToolInfo,
 } from "./types";
 
 /**
- * Run a rules-based scan. Streams `ScanEvent`s to `onEvent` while running and
- * resolves with the full `ScanReport` when the backend finishes.
+ * Run a rules-based scan over the selected drives/folders. Streams
+ * `ScanEvent`s to `onEvent` while running and resolves with the full
+ * `ScanReport` when the backend finishes.
  */
 export function scan(
-  roots: string[],
+  request: ScanRequest,
   onEvent: (event: ScanEvent) => void,
 ): Promise<ScanReport> {
   const channel = new Channel<ScanEvent>();
   channel.onmessage = onEvent;
-  return invoke<ScanReport>("scan", { roots, onEvent: channel });
+  return invoke<ScanReport>("scan", { request, onEvent: channel });
 }
 
 /** Flip the backend cancel flag for an in-flight scan. */
@@ -70,6 +73,11 @@ export function defaultRoots(): Promise<string[]> {
   return invoke<string[]>("default_roots");
 }
 
+/** Every readable fixed drive, with label and free space. */
+export function listDrives(): Promise<DriveEntry[]> {
+  return invoke<DriveEntry[]>("list_drives");
+}
+
 /** Free/total space for the header gauge. */
 export function driveInfo(path: string): Promise<DriveInfo> {
   return invoke<DriveInfo>("drive_info", { path });
@@ -83,6 +91,16 @@ export function driveInfo(path: string): Promise<DriveInfo> {
 export async function pickFolder(): Promise<string | null> {
   const selected = await open({ directory: true, multiple: false });
   return typeof selected === "string" ? selected : null;
+}
+
+/**
+ * Open a native folder picker that allows more than one folder.
+ * Returns an empty array when the user cancels.
+ */
+export async function pickFolders(): Promise<string[]> {
+  const selected = await open({ directory: true, multiple: true });
+  if (typeof selected === "string") return [selected];
+  return Array.isArray(selected) ? selected : [];
 }
 
 // ---------------------------------------------------------------------------

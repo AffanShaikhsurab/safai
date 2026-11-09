@@ -95,6 +95,22 @@ const Automation: Component = () => {
   const cfg = () => appStore.state.automation?.config;
   const patch = appStore.patchAutomation;
 
+  /** Per-drive usage, falling back for an older backend payload. */
+  const disks = () => {
+    const s = status();
+    if (!s) return [];
+    if (s.disks && s.disks.length > 0) return s.disks;
+    if (!s.disk) return [];
+    return [
+      {
+        mount: s.disk.mount,
+        freeBytes: s.disk.freeBytes,
+        totalBytes: s.disk.totalBytes,
+        usedPercent: s.diskUsedPercent,
+      },
+    ];
+  };
+
   /** Rules the current tier + category choice would let autopilot touch. */
   const eligible = createMemo<RuleInfo[]>(() => {
     const c = cfg();
@@ -273,6 +289,35 @@ const Automation: Component = () => {
               </div>
             </div>
           </Show>
+
+          <Show when={disks().length > 1}>
+            <div class="auto-drive-list">
+              <For each={disks()}>
+                {(disk) => (
+                  <div class="auto-drive-row">
+                    <span class="mnt">{disk.mount}</span>
+                    <span class="auto-meter-track">
+                      <span
+                        class="auto-meter-fill"
+                        data-over={
+                          (disk.usedPercent ?? 0) >= cfg()!.thresholdPercent
+                            ? "true"
+                            : "false"
+                        }
+                        style={{
+                          width: `${Math.min(disk.usedPercent ?? 0, 100)}%`,
+                        }}
+                      />
+                    </span>
+                    <span class="pc">
+                      {Math.round(disk.usedPercent ?? 0)}% ·{" "}
+                      {formatBytes(disk.freeBytes)} free
+                    </span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
 
         {/* ---------------------------------------------------------------
@@ -379,6 +424,33 @@ const Automation: Component = () => {
                   void patch({ thresholdPercent: Number(e.currentTarget.value) })
                 }
               />
+            </div>
+
+            <div class="set-row">
+              <div>
+                <div class="rl">Watch</div>
+                <div class="rd">
+                  One drive, or all of them. With "All drives" the worst volume
+                  decides.
+                </div>
+              </div>
+              <select
+                class="auto-select"
+                aria-label="Drives to watch"
+                value={cfg()!.thresholdPath}
+                onChange={(e) =>
+                  void patch({ thresholdPath: e.currentTarget.value })
+                }
+              >
+                <option value="">All drives</option>
+                <For each={appStore.state.drives}>
+                  {(drive) => (
+                    <option value={drive.root}>
+                      {drive.mount} {drive.label}
+                    </option>
+                  )}
+                </For>
+              </select>
             </div>
           </Show>
         </div>

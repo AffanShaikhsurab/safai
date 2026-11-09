@@ -1,6 +1,7 @@
 import { type Component, For, Show, createSignal } from "solid-js";
 import { appStore } from "../../state/store";
 import { formatBytes, relativeTime } from "../../lib/format";
+import { mountOfPath } from "../../lib/drives";
 import { openPath } from "../../lib/tauri";
 import { useClean } from "./model";
 import { ProjectsSky } from "./Projects";
@@ -127,6 +128,11 @@ const CleanSky: Component<{ onRequestClean: () => void }> = (props) => {
                                 {item.path}
                               </span>
                             </span>
+                            <Show when={m.driveTotals().length > 1}>
+                              <span class="drive-tag">
+                                {mountOfPath(item.path) ?? "other"}
+                              </span>
+                            </Show>
                             <Show when={item.lastModifiedSecs !== null}>
                               <span class="fstale">
                                 {relativeTime(item.lastModifiedSecs as number)}

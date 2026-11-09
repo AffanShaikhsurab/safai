@@ -62,8 +62,15 @@ const SkyShell: Component<{ children: JSX.Element }> = (props) => {
               const used = usedPercent(d.freeBytes, d.totalBytes);
               return (
                 <div class="drv">
-                  <span>
+                  <span
+                    title={appStore.state.drives
+                      .map((drive) => `${drive.mount} ${drive.label}`)
+                      .join("\n")}
+                  >
                     {d.mount} · {formatBytes(d.freeBytes)} free
+                    {appStore.state.drives.length > 1
+                      ? ` +${appStore.state.drives.length - 1}`
+                      : ""}
                   </span>
                   <span class="drive-meter" aria-hidden="true">
                     <For each={meterCells(used)}>

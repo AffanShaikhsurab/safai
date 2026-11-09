@@ -42,7 +42,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_store::StoreExt;
 
-use crate::dto::{DeleteEvent, DriveInfo};
+use crate::dto::{DeleteEvent, DriveInfo, DriveUsage};
 use crate::engine;
 use crate::state::SafaiState;
 use crate::winsys::{self, BackgroundMode};
@@ -116,10 +116,13 @@ pub struct AutomationStatus {
     pub deferred_reason: Option<String>,
     /// Newest-first audit trail.
     pub history: Vec<RunRecord>,
-    /// The watched drive, for the threshold readout.
+    /// The watched drive with the highest used percentage, for the threshold
+    /// readout and tray. Kept for compatibility with the single-drive payload.
     pub disk: Option<DriveInfo>,
-    /// Used percentage of the watched drive.
+    /// Used percentage of the worst watched drive.
     pub disk_used_percent: Option<f64>,
+    /// Every watched drive, worst first. Empty on non-Windows.
+    pub disks: Vec<DriveUsage>,
     /// Is the app actually registered to launch at logon?
     pub autostart_registered: bool,
     /// Seconds since the last user input.
@@ -253,15 +256,75 @@ fn persist_state(app: &AppHandle, state: &ScheduleState) {
 // Status assembly + emission
 // ---------------------------------------------------------------------------
 
-/// Path whose volume the threshold watches.
-fn watched_path(cfg: &ScheduleConfig) -> std::path::PathBuf {
+/// Paths whose volumes the threshold watches.
+///
+/// An explicit `threshold_path` pins one volume. The default (empty) watches
+/// every fixed drive and triggers on the worst one, which is the multi-drive
+/// behaviour a background cleaner needs.
+fn watched_paths(cfg: &ScheduleConfig) -> Vec<std::path::PathBuf> {
     if !cfg.threshold_path.trim().is_empty() {
-        return std::path::PathBuf::from(&cfg.threshold_path);
+        let path = std::path::PathBuf::from(&cfg.threshold_path);
+        if winsys::disk_free_total(&path).is_some() {
+            return vec![path];
+        }
+    }
+    let drives = winsys::fixed_drives();
+    if !drives.is_empty() {
+        return drives;
     }
     safai_rules::default_roots()
         .into_iter()
         .next()
-        .unwrap_or_else(|| std::path::PathBuf::from("C:/"))
+        .map(|p| vec![p])
+        .unwrap_or_default()
+}
+
+/// Read free/total/used for each watched path, worst first.
+fn build_disks(paths: &[std::path::PathBuf]) -> Vec<DriveUsage> {
+    let mut disks: Vec<DriveUsage> = paths
+        .iter()
+        .filter_map(|path| {
+            let (free_bytes, total_bytes) = winsys::disk_free_total(path)?;
+            let used_percent = if total_bytes == 0 {
+                None
+            } else {
+                Some((total_bytes.saturating_sub(free_bytes) as f64 / total_bytes as f64) * 100.0)
+            };
+            Some(DriveUsage {
+                mount: engine::drive_mount(path),
+                free_bytes,
+                total_bytes,
+                used_percent,
+            })
+        })
+        .collect();
+    disks.sort_by(|a, b| {
+        b.used_percent
+            .partial_cmp(&a.used_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.mount.cmp(&b.mount))
+    });
+    disks
+}
+
+/// The watched drive closest to full.
+fn worst_usage(disks: &[DriveUsage]) -> Option<&DriveUsage> {
+    disks
+        .iter()
+        .filter(|d| d.used_percent.is_some())
+        .max_by(|a, b| {
+            a.used_percent
+                .partial_cmp(&b.used_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+/// Mounts of every fixed drive, for an automation scan scope.
+fn all_fixed_mounts() -> Vec<String> {
+    winsys::fixed_drives()
+        .iter()
+        .filter_map(|p| safai_rules::mount_key(p))
+        .collect()
 }
 
 /// Build the full status snapshot.
@@ -269,19 +332,14 @@ pub fn status(app: &AppHandle) -> AutomationStatus {
     let rt = runtime(app);
     let cfg = rt.config();
 
-    let path = watched_path(&cfg);
-    let disk = winsys::disk_free_total(&path).map(|(free_bytes, total_bytes)| DriveInfo {
-        mount: engine::drive_mount(&path),
-        free_bytes,
-        total_bytes,
+    let disks = build_disks(&watched_paths(&cfg));
+    let worst = worst_usage(&disks);
+    let disk = worst.map(|d| DriveInfo {
+        mount: d.mount.clone(),
+        free_bytes: d.free_bytes,
+        total_bytes: d.total_bytes,
     });
-    let disk_used_percent = disk.as_ref().and_then(|d| {
-        if d.total_bytes == 0 {
-            None
-        } else {
-            Some((d.total_bytes.saturating_sub(d.free_bytes) as f64 / d.total_bytes as f64) * 100.0)
-        }
-    });
+    let disk_used_percent = worst.and_then(|d| d.used_percent);
 
     let (last_run_at, history) = {
         let state = rt.state.lock().unwrap();
@@ -313,6 +371,7 @@ pub fn status(app: &AppHandle) -> AutomationStatus {
         history,
         disk,
         disk_used_percent,
+        disks,
     }
 }
 
@@ -473,17 +532,21 @@ fn observe(app: &AppHandle, rt: &Arc<ScheduleRuntime>, cfg: &ScheduleConfig) -> 
         (state.last_run_at, state.last_threshold_run_at)
     };
 
+    let disks = if cfg.threshold_enabled {
+        build_disks(&watched_paths(cfg))
+    } else {
+        Vec::new()
+    };
+    let worst = worst_usage(&disks);
+
     Conditions {
         now: now_secs(),
         manual_requested,
         run_in_flight,
         activity_busy: gate.is_busy(),
         ui_engaged: gate.is_ui_engaged(),
-        disk_used_percent: if cfg.threshold_enabled {
-            winsys::disk_used_percent(&watched_path(cfg))
-        } else {
-            None
-        },
+        disk_used_percent: worst.and_then(|d| d.used_percent),
+        worst_drive: worst.map(|d| d.mount.clone()),
         idle_secs: winsys::idle_secs(),
         on_battery: winsys::on_battery(),
         last_run_at,
@@ -529,7 +592,52 @@ async fn execute(app: &AppHandle, rt: &Arc<ScheduleRuntime>, trigger: TriggerKin
     };
 
     // ---- Scan ----------------------------------------------------------
-    let scan_cfg = engine::build_scan_config(&[], true);
+    // A capacity-triggered run only needs the watched volume(s); a cadence or
+    // manual run checks every fixed drive. Both fall back to all drives when
+    // the watch path can't be mapped to a mount (e.g. a UNC override).
+    let mut drives: Vec<String> = if trigger == TriggerKind::Threshold {
+        watched_paths(&cfg)
+            .iter()
+            .filter_map(|path| safai_rules::mount_key(path))
+            .collect()
+    } else {
+        all_fixed_mounts()
+    };
+    if drives.is_empty() {
+        drives = all_fixed_mounts();
+    }
+    let request = engine::ScanRequest {
+        drives,
+        folders: Vec::new(),
+        deep: true,
+    };
+    let prepared = match engine::prepare_scan(&request) {
+        Ok(prepared) => prepared,
+        Err(err) => {
+            finish(
+                app,
+                rt,
+                trigger,
+                started_at,
+                clock,
+                RunRecord {
+                    at: started_at,
+                    trigger,
+                    scanned_items: 0,
+                    reclaimable_bytes: 0,
+                    cleaned_items: 0,
+                    reclaimed_bytes: 0,
+                    auto_cleaned: false,
+                    skipped_items: 0,
+                    duration_ms: clock.elapsed().as_millis() as u64,
+                    error: Some(format!("scan scope failed: {err}")),
+                },
+                None,
+            );
+            return;
+        }
+    };
+    let scan_cfg = prepared.cfg.clone();
     let cancel = rt.cancel.clone();
     let sink_rt = rt.clone();
     let sink_app = app.clone();
@@ -598,11 +706,13 @@ async fn execute(app: &AppHandle, rt: &Arc<ScheduleRuntime>, trigger: TriggerKin
         }
     };
 
+    report.warnings.extend(prepared.warnings.iter().cloned());
     let scanned_items: u32 = report.groups.iter().map(|g| g.items.len() as u32).sum();
     let reclaimable_bytes = report.total_reclaimable_bytes;
 
-    // Make the findings actionable from the UI (ids resolve server-side).
-    remember_items(app, &report);
+    // Make the findings actionable from the UI and commit the deletion scope
+    // the scan actually used, so an automatic cleanup can't delete outside it.
+    engine::commit_scan(&gate, &prepared, &report);
 
     // ---- Optional autopilot cleanup ------------------------------------
     let mut cleaned_items = 0u32;
@@ -955,6 +1065,34 @@ mod tests {
 
         let pruned = prune_report(report, &removed);
         assert_eq!(pruned.total_reclaimable_bytes, 100);
+    }
+
+    // -- multi-drive threshold -------------------------------------------
+
+    fn usage(mount: &str, used: Option<f64>) -> DriveUsage {
+        DriveUsage {
+            mount: mount.to_string(),
+            free_bytes: 10,
+            total_bytes: 100,
+            used_percent: used,
+        }
+    }
+
+    #[test]
+    fn the_worst_watched_drive_wins() {
+        let disks = vec![
+            usage("C:", Some(40.0)),
+            usage("D:", Some(91.0)),
+            usage("E:", Some(70.0)),
+        ];
+        assert_eq!(worst_usage(&disks).map(|d| d.mount.as_str()), Some("D:"));
+    }
+
+    #[test]
+    fn an_unreadable_drive_never_wins() {
+        let disks = vec![usage("C:", None), usage("D:", Some(51.0))];
+        assert_eq!(worst_usage(&disks).map(|d| d.mount.as_str()), Some("D:"));
+        assert!(worst_usage(&[usage("C:", None)]).is_none());
     }
 
     // -- human_bytes -----------------------------------------------------

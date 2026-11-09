@@ -21,8 +21,46 @@ const Done: Component = () => {
 
   const reclaimed = createMemo(() => splitBytes(progress().reclaimedBytes));
 
-  const freeNow = () => after()?.freeBytes ?? before()?.freeBytes ?? 0;
-  const mount = () => after()?.mount ?? before()?.mount ?? "Drive C:";
+  const afterDrives = () =>
+    appStore.state.drivesAfter.length > 0
+      ? appStore.state.drivesAfter
+      : appStore.state.drives;
+
+  const freeNow = () => {
+    const affected = new Set(
+      Object.keys(appStore.state.reclaimedByDrive).filter((m) => m !== "other"),
+    );
+    const rows = afterDrives().filter((drive) => affected.has(drive.mount));
+    if (rows.length > 0) {
+      return rows.reduce((sum, drive) => sum + drive.freeBytes, 0);
+    }
+    return after()?.freeBytes ?? before()?.freeBytes ?? 0;
+  };
+
+  const mount = () => {
+    const affected = Object.keys(appStore.state.reclaimedByDrive).filter(
+      (m) => m !== "other",
+    );
+    const system = appStore.state.drives.find((d) => d.system)?.mount;
+    if (system && affected.includes(system)) return system;
+    return affected[0] ?? after()?.mount ?? before()?.mount ?? "Drive C:";
+  };
+
+  const driveRows = createMemo(() => {
+    const reclaimed = appStore.state.reclaimedByDrive;
+    return Object.entries(reclaimed)
+      .filter(([mount]) => mount !== "other")
+      .map(([mount, bytes]) => {
+        const drive = afterDrives().find((d) => d.mount === mount);
+        return {
+          mount,
+          reclaimed: bytes,
+          free: drive?.freeBytes ?? null,
+          before: drive ? drive.freeBytes + bytes : null,
+        };
+      })
+      .sort((a, b) => b.reclaimed - a.reclaimed);
+  });
 
   return (
     <div class="stage animate-rise">
@@ -30,7 +68,13 @@ const Done: Component = () => {
         <div class="card topcard">
           <div>
             <div class="k">Free space</div>
-            <div class="s">{mount()}</div>
+            <div class="s">
+              {Object.keys(appStore.state.reclaimedByDrive).filter(
+                (m) => m !== "other",
+              ).length > 1
+                ? "across cleaned drives"
+                : mount()}
+            </div>
           </div>
           <div class="val mint">{formatBytes(freeNow())}</div>
         </div>
@@ -100,6 +144,34 @@ const Done: Component = () => {
           </Show>
         </div>
       </div>
+
+      <Show when={driveRows().length > 1}>
+        <section class="card skip-card">
+          <div class="skip-head">
+            <span class="t">By drive</span>
+            <span class="s">Reclaimed and free space on each drive.</span>
+          </div>
+          <div class="drive-breakdown">
+            <For each={driveRows()}>
+              {(row) => (
+                <div class="row">
+                  <span class="mnt">{row.mount}</span>
+                  <span>{formatBytes(row.reclaimed)} reclaimed</span>
+                  <span class="r">
+                    {row.free === null
+                      ? "—"
+                      : `${formatBytes(row.free)} free now${
+                          row.before === null
+                            ? ""
+                            : ` · was ${formatBytes(row.before)}`
+                        }`}
+                  </span>
+                </div>
+              )}
+            </For>
+          </div>
+        </section>
+      </Show>
 
       {/* Skipped items — show exactly what was left behind and why. */}
       <Show when={progress().skippedItems.length > 0}>

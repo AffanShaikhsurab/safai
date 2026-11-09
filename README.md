@@ -43,7 +43,8 @@ sorted picture of what you can get back:
   a breakdown by category, and how much you've reclaimed over time.
 - **🔍 One-click scan** — finds package-manager caches, `node_modules` and build
   outputs, editor/app data, temp files, downloaded models, and any other large
-  folders — for *any* toolchain, not just a hard-coded few.
+  folders — for *any* toolchain, not just a hard-coded few. Pick one drive or
+  several; results are grouped by category and filterable by drive.
 - **🟢 Safety, built in** — every finding is tagged **Safe** (regenerates on its
   own), **Review**, or **Caution** (your data — never selected for you). Safe
   items are pre-selected; the risky stuff always needs your explicit yes.
@@ -191,13 +192,15 @@ The installer is produced under `src-tauri/target/release/bundle/`.
 
 ## Using Safai
 
-1. **Scan** — open **Clean**, pick your scan mode (Quick or Deep), and hit scan.
-   Deep scan also hunts for large folders no rule knows about.
+1. **Scan** — open **Clean**, tick the drives you want (and optionally add
+   folders), pick Quick or Deep, and hit scan. Quick finds known caches and
+   project folders; Deep also measures large folders on the selected drives.
 2. **Review** — findings are grouped into collapsible sections, sorted biggest
-   first. Flip a whole section on, or cherry-pick items. Safe items start
-   selected; **Caution** items never do.
+   first, with a drive tag and a per-drive filter. Flip a whole section on, or
+   cherry-pick items. Safe items start selected; **Caution** items never do.
 3. **Clean** — choose **Recycle Bin** (default, recoverable) or **Permanent**,
-   confirm the preview, and Safai does the rest.
+   confirm the preview, and Safai does the rest. Done reports reclaimed space
+   per drive.
 
 Your reclaimed total and history live on the **Overview**.
 

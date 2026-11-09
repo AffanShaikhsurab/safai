@@ -108,6 +108,42 @@ export interface DriveInfo {
   totalBytes: number;
 }
 
+/** A fixed local volume, as reported by the backend. */
+export type DriveKind = "fixed" | "removable" | "network" | "unknown";
+
+export interface DriveEntry {
+  /** Display mount, e.g. `"C:"`. */
+  mount: string;
+  /** Root path safe to pass to scan commands, e.g. `"C:/"`. */
+  root: string;
+  label: string;
+  fileSystem: string;
+  freeBytes: number;
+  totalBytes: number;
+  usedPercent: number | null;
+  system: boolean;
+  readable: boolean;
+  kind: DriveKind;
+}
+
+/** Per-drive usage in the automation status payload. */
+export interface DriveUsage {
+  mount: string;
+  freeBytes: number;
+  totalBytes: number;
+  usedPercent: number | null;
+}
+
+/** The scope the UI asks the backend to scan. */
+export interface ScanRequest {
+  /** Drive mounts, e.g. `["C:", "D:"]`. */
+  drives: string[];
+  /** Extra absolute folders. */
+  folders: string[];
+  /** Generic large-folder discovery. Quick = false, Deep = true. */
+  deep: boolean;
+}
+
 export interface ToolInfo {
   id: string;
   label: string;
@@ -218,6 +254,8 @@ export interface AutomationStatus {
   history: RunRecord[];
   disk: DriveInfo | null;
   diskUsedPercent: number | null;
+  /** Every watched drive, worst first. Older backends may omit it. */
+  disks?: DriveUsage[];
   autostartRegistered: boolean;
   idleSecs: number;
   onBattery: boolean;

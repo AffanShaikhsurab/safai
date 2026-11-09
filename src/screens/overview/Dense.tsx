@@ -41,8 +41,11 @@ const OverviewDense: Component = () => {
         </div>
         <div class="dense-metric">
           <div class="k">Free</div>
-          <div class="v">{formatBytes(m.drive()?.freeBytes ?? 0)}</div>
-          <div class="d">{m.usedPct()}% used</div>
+          <div class="v">{formatBytes(m.aggregate().freeBytes)}</div>
+          <div class="d">
+            {m.usedPct()}% used · {m.aggregate().count} drive
+            {m.aggregate().count === 1 ? "" : "s"}
+          </div>
         </div>
         <div class="dense-metric">
           <div class="k">After cleanup</div>
@@ -107,6 +110,50 @@ const OverviewDense: Component = () => {
             </For>
           </div>
         </div>
+
+        {/* Per-drive health */}
+        <Show when={m.drives().length > 1}>
+          <div class="dense-panel">
+            <div class="dense-phead">
+              By drive
+              <span class="r">{m.aggregate().count} volumes</span>
+            </div>
+            <table class="dense-table">
+              <thead>
+                <tr>
+                  <th>Drive</th>
+                  <th>Label</th>
+                  <th class="num">Used</th>
+                  <th class="num">Free</th>
+                  <th class="num">Reclaimable</th>
+                  <th class="num">After</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={m.drives()}>
+                  {(drive) => (
+                    <tr onClick={openInClean}>
+                      <td class="mono">{drive.mount}</td>
+                      <td>{drive.label || "—"}</td>
+                      <td class="num">
+                        {Math.round(drive.usedPercent ?? 0)}%
+                      </td>
+                      <td class="num">{formatBytes(drive.freeBytes)}</td>
+                      <td class="num">
+                        {formatBytes(
+                          m.reclaimableByDrive().get(drive.mount) ?? 0,
+                        )}
+                      </td>
+                      <td class="num">
+                        {formatBytes(m.freeAfterFor(drive))}
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </Show>
 
         {/* Breakdown table */}
         <div class="dense-panel">

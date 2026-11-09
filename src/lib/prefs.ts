@@ -5,6 +5,7 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
 import { DEFAULT_SKY as SKY_DEFAULTS, normalizeSky, type SkyPrefs } from "./sky";
 import { DEFAULT_INACTIVE_DAYS, normalizeInactiveDays } from "./devprojects";
+import type { ScopePrefs } from "./drives";
 
 /**
  * Themes the user can pick in Settings → Appearance.
@@ -22,6 +23,9 @@ const KEY_DEEP = "deepScan";
 const KEY_RECYCLE = "toRecycleBin";
 const KEY_SKY = "sky";
 const KEY_DEV_DAYS = "devInactiveDays";
+const KEY_SCOPE = "scanScope";
+
+export type { ScopePrefs } from "./drives";
 
 let storePromise: Promise<Store> | null = null;
 function getStore(): Promise<Store> {
@@ -149,6 +153,39 @@ export async function saveDevInactiveDays(days: number): Promise<void> {
   try {
     const store = await getStore();
     await store.set(KEY_DEV_DAYS, days);
+    await store.save();
+  } catch {
+    // Non-fatal.
+  }
+}
+
+/**
+ * The remembered drive/folder scope. `null` means "never saved", which lets
+ * the first-run reconciler choose all readable drives without confusing it
+ * with a deliberately empty selection.
+ */
+export async function loadScanScope(): Promise<ScopePrefs | null> {
+  try {
+    const store = await getStore();
+    const value = await store.get<ScopePrefs>(KEY_SCOPE);
+    if (
+      !value ||
+      !Array.isArray(value.drives) ||
+      !Array.isArray(value.folders) ||
+      typeof value.allDrives !== "boolean"
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveScanScope(scope: ScopePrefs): Promise<void> {
+  try {
+    const store = await getStore();
+    await store.set(KEY_SCOPE, scope);
     await store.save();
   } catch {
     // Non-fatal.

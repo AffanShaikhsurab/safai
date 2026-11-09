@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use crate::detect::{detect_tools, display_path, expand};
+use crate::detect::{detect_tools, display_path, expand, path_is_on_drives};
 use crate::dev::{self, DevArtifact};
 use crate::model::{
     Category, CategoryGroup, CleanupItem, DevInfo, SafetyTier, ScanEvent, ScanReport,
@@ -18,24 +18,62 @@ use crate::model::{
 use crate::rules::{all_rules, CleanupRule};
 
 /// Configuration for a scan run.
+#[derive(Debug, Clone)]
 pub struct ScanConfig {
-    /// Roots reported to the UI (typically the user profile + cache parents).
-    /// Also swept (one level deep) for the generic large-folder discovery.
+    /// Rule/profile roots reported to the UI (typically the user profile +
+    /// cache parents). Swallowed one level deep for generic large-folder
+    /// discovery when `discover_large_folders` is on.
     pub roots: Vec<PathBuf>,
-    /// Where to hunt for pattern targets (`node_modules`, build dirs) via the
-    /// pruned walk. The caller chooses these (e.g. common dev folders) so this
-    /// crate stays policy-free.
+    /// Where to hunt for dev-project artifact folders (`node_modules`, build
+    /// dirs) via the pruned walk. Usually the selected drive roots.
     pub project_scan_roots: Vec<PathBuf>,
+    /// Extra parents for generic large-folder discovery. Data-drive roots go
+    /// here so Deep can size `D:\Projects` without ever sizing `C:\Windows`.
+    pub discovery_roots: Vec<PathBuf>,
+    /// Restrict fixed-location rules to these mounts (`"C:"`, `"D:"`). An empty
+    /// list with `restrict_rules = true` means "no fixed rules" — the correct
+    /// behaviour for a folder-only scan.
+    pub drives: Vec<String>,
+    /// When true, fixed-rule locations are filtered by `drives`.
+    pub restrict_rules: bool,
     /// When true, run the generic "large folders" discovery pass: surface big
-    /// directories under `roots` that no specific rule matched, so any user's
-    /// software shows up (Caution tier, never pre-selected).
+    /// directories under `roots`/`discovery_roots` that no specific rule
+    /// matched, so any user's software shows up (Caution tier, never
+    /// pre-selected).
     pub discover_large_folders: bool,
+    /// Wall-clock budget for the dev-project discovery walk.
+    pub walk_time_budget: Duration,
+    /// Wall-clock budget for sizing all directories.
+    pub size_time_budget: Duration,
+    /// Maximum number of generic large folders to surface.
+    pub max_large_folders: usize,
+}
+
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            roots: Vec::new(),
+            project_scan_roots: Vec::new(),
+            discovery_roots: Vec::new(),
+            drives: Vec::new(),
+            restrict_rules: false,
+            discover_large_folders: false,
+            walk_time_budget: WALK_TIME_BUDGET,
+            size_time_budget: SIZE_TIME_BUDGET,
+            max_large_folders: MAX_LARGE_FOLDERS,
+        }
+    }
 }
 
 /// Minimum size for a folder to be surfaced by the generic discovery pass.
 const MIN_LARGE_FOLDER_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
 /// Cap on how many generic large folders to report (largest first).
 const MAX_LARGE_FOLDERS: usize = 20;
+
+/// Hard cap on how many discovery candidates are sized in one run. The nested
+/// prune below usually leaves far fewer; this only guards a pathological drive
+/// root with hundreds of top-level folders.
+const MAX_DISCOVERY_CANDIDATES: usize = 256;
 
 /// Stable category ordering for deterministic group output.
 const CATEGORY_ORDER: [Category; 7] = [
@@ -59,6 +97,14 @@ pub fn label_for(category: Category) -> &'static str {
         Category::Browser => "Browser binaries",
         Category::Other => "Other large items",
     }
+}
+
+/// May a fixed-location rule on `path` run for this scan?
+///
+/// With no restriction every rule runs (legacy). With a restriction, an empty
+/// drive list means "folder-only scan, no fixed rules" — not "no filter".
+fn rule_path_allowed(cfg: &ScanConfig, path: &Path) -> bool {
+    !cfg.restrict_rules || (!cfg.drives.is_empty() && path_is_on_drives(path, &cfg.drives))
 }
 
 /// Is `candidate` (normalized, lowercased) equal to, an ancestor of, or a
@@ -96,17 +142,46 @@ const DISCOVERY_SKIP_NAMES: &[&str] = &[
     "onedrive - personal",
     "dropbox",
     "google drive",
+    // Operating-system trees. These are large but not reclaimable, and sizing
+    // them on a data drive would waste minutes for a Caution finding nobody
+    // should delete.
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "$recycle.bin",
+    "system volume information",
+    "recovery",
+    "$windows.~bt",
+    "$windows.~ws",
+    "$winreagent",
+    "perflogs",
+    "msocache",
+    "config.msi",
+    "drivers",
+    "intel",
+    "amd",
+    "nvidia",
 ];
+
+/// Skipped only when the parent is a bare drive root. `Users` is user data on
+/// any drive, and sizing the whole profile as one "large folder" would both be
+/// slow and hide the more useful per-folder findings underneath it.
+const DISCOVERY_SKIP_AT_DRIVE_ROOT: &[&str] = &["users"];
 
 /// Cheaply enumerate the *direct child* directories of each root that are
 /// candidates for the generic large-folder pass. This does **no** sizing (just
 /// `read_dir` + a name denylist), so the caller can learn the candidate count
 /// up front and drive an accurate, smoothly-advancing progress bar — then size
 /// each candidate one at a time, streaming a `Progress` event per folder.
-fn enumerate_large_folder_candidates(parents: &[PathBuf], cancel: &AtomicBool) -> Vec<PathBuf> {
+fn enumerate_large_folder_candidates(
+    parents: &[PathBuf],
+    discovery_roots: &[PathBuf],
+    cancel: &AtomicBool,
+) -> Vec<PathBuf> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<PathBuf> = Vec::new();
-    for parent in parents {
+    for parent in parents.iter().chain(discovery_roots.iter()) {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
@@ -114,6 +189,9 @@ fn enumerate_large_folder_candidates(parents: &[PathBuf], cancel: &AtomicBool) -
             Ok(r) => r,
             Err(_) => continue,
         };
+        // A bare drive root is the only place where `Users` is uninteresting
+        // as one blob; inside a profile it is already the parent we start from.
+        let parent_is_drive_root = parent.parent().is_none();
         for entry in rd.flatten() {
             let ft = match entry.file_type() {
                 Ok(f) => f,
@@ -131,13 +209,31 @@ fn enumerate_large_folder_candidates(parents: &[PathBuf], cancel: &AtomicBool) -
             if DISCOVERY_SKIP_NAMES.contains(&name_low.as_str()) {
                 continue;
             }
+            if parent_is_drive_root && DISCOVERY_SKIP_AT_DRIVE_ROOT.contains(&name_low.as_str()) {
+                continue;
+            }
             let low = display_path(&path).trim_end_matches('/').to_lowercase();
             if seen.insert(low) {
                 out.push(path);
             }
         }
     }
-    out
+
+    // If two discovery parents nest (a custom folder inside a selected drive,
+    // or two custom folders), the shallower candidate already contains the
+    // deeper one. Sizing both would double-count the same bytes.
+    out.sort_by_key(|p| p.components().count());
+    let mut pruned: Vec<PathBuf> = Vec::new();
+    for path in out {
+        if pruned.iter().any(|kept| path.starts_with(kept)) {
+            continue;
+        }
+        pruned.push(path);
+        if pruned.len() >= MAX_DISCOVERY_CANDIDATES {
+            break;
+        }
+    }
+    pruned
 }
 
 /// 64-bit FNV-1a hash — chosen over `DefaultHasher` because FNV is a fixed,
@@ -234,6 +330,7 @@ fn size_dirs_with_progress(
     base_found: u64,
     base_checked: u32,
     rules_total: u32,
+    time_budget: Duration,
     on_event: &mut dyn FnMut(ScanEvent),
     make_item: &mut dyn FnMut(usize, u64) -> Option<CleanupItem>,
     warnings: &mut Vec<String>,
@@ -282,7 +379,7 @@ fn size_dirs_with_progress(
             std::thread::sleep(SIZE_PROGRESS_INTERVAL);
 
             // Propagate global cancellation or a blown time budget to the walk.
-            if cancel.load(Ordering::Relaxed) || start.elapsed() >= SIZE_TIME_BUDGET {
+            if cancel.load(Ordering::Relaxed) || start.elapsed() >= time_budget {
                 local_cancel.store(true, Ordering::Relaxed);
             }
 
@@ -334,10 +431,10 @@ fn size_dirs_with_progress(
         }
     }
 
-    if start.elapsed() >= SIZE_TIME_BUDGET && !cancel.load(Ordering::Relaxed) {
+    if start.elapsed() >= time_budget && !cancel.load(Ordering::Relaxed) {
         warnings.push(format!(
             "Sizing stopped after {}s; some folder sizes may be underestimated.",
-            SIZE_TIME_BUDGET.as_secs()
+            time_budget.as_secs()
         ));
     }
 }
@@ -348,10 +445,11 @@ fn discover_with_progress(
     roots: &[PathBuf],
     cancel: &AtomicBool,
     found_bytes: u64,
+    budget: Duration,
     on_event: &mut dyn FnMut(ScanEvent),
 ) -> (Vec<DevArtifact>, bool) {
     let dirs_seen = AtomicU64::new(0);
-    let deadline = Instant::now() + WALK_TIME_BUDGET;
+    let deadline = Instant::now() + budget;
     std::thread::scope(|s| {
         let dirs_ref = &dirs_seen;
         let handle = s.spawn(move || dev::discover(roots, cancel, Some(deadline), dirs_ref));
@@ -448,7 +546,12 @@ pub fn run_scan(
     // Scanned roots (deduped) + Started event.
     // ------------------------------------------------------------------
     let mut scanned_roots: Vec<String> = Vec::new();
-    for r in cfg.roots.iter().chain(cfg.project_scan_roots.iter()) {
+    for r in cfg
+        .roots
+        .iter()
+        .chain(cfg.project_scan_roots.iter())
+        .chain(cfg.discovery_roots.iter())
+    {
         let d = display_path(r);
         if !scanned_roots.contains(&d) {
             scanned_roots.push(d);
@@ -482,7 +585,7 @@ pub fn run_scan(
     // Enumerate generic large-folder candidates up front (cheap `read_dir`, no
     // sizing).
     let candidates: Vec<PathBuf> = if cfg.discover_large_folders {
-        enumerate_large_folder_candidates(&cfg.roots, cancel)
+        enumerate_large_folder_candidates(&cfg.roots, &cfg.discovery_roots, cancel)
     } else {
         Vec::new()
     };
@@ -508,6 +611,12 @@ pub fn run_scan(
         }
         for spec in &rule.locations {
             if let Some(path) = expand(spec.raw) {
+                // A scan has a drive scope. Fixed rules are absolute paths, so
+                // without this filter a folder-only scan (or a D:-only scan)
+                // would still surface C: caches the user did not select.
+                if !rule_path_allowed(cfg, &path) {
+                    continue;
+                }
                 let disp = display_path(&path);
                 if path.is_dir() {
                     dir_jobs.push(PendingDir {
@@ -552,12 +661,17 @@ pub fn run_scan(
     // validated artifact folders, then work out which project each belongs to
     // and when that project was last worked on.
     if !cfg.project_scan_roots.is_empty() && !cancel.load(Ordering::Relaxed) {
-        let (artifacts, timed_out) =
-            discover_with_progress(&cfg.project_scan_roots, cancel, found_bytes, on_event);
+        let (artifacts, timed_out) = discover_with_progress(
+            &cfg.project_scan_roots,
+            cancel,
+            found_bytes,
+            cfg.walk_time_budget,
+            on_event,
+        );
         if timed_out {
             warnings.push(format!(
                 "Project scan stopped after {}s; some project folders may not be listed.",
-                WALK_TIME_BUDGET.as_secs()
+                cfg.walk_time_budget.as_secs()
             ));
         }
         on_event(ScanEvent::Progress {
@@ -671,7 +785,7 @@ pub fn run_scan(
             let job = &dir_jobs[idx];
 
             if job.is_large_folder {
-                if emitted_large >= MAX_LARGE_FOLDERS {
+                if emitted_large >= cfg.max_large_folders {
                     return None;
                 }
                 if size < MIN_LARGE_FOLDER_BYTES {
@@ -704,6 +818,7 @@ pub fn run_scan(
             found_bytes,
             file_items,
             rules_total,
+            cfg.size_time_budget,
             on_event,
             &mut make_item,
             &mut warnings,
@@ -793,6 +908,7 @@ mod tests {
             roots: vec![root.clone()],
             project_scan_roots: vec![root.clone()],
             discover_large_folders: false,
+            ..Default::default()
         };
         let cancel = AtomicBool::new(false);
 
@@ -827,6 +943,34 @@ mod tests {
         assert!(report.total_reclaimable_bytes >= 30);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_only_scope_skips_fixed_rules_but_a_drive_scope_does_not() {
+        let folder_only = ScanConfig {
+            restrict_rules: true,
+            drives: Vec::new(),
+            ..Default::default()
+        };
+        assert!(!rule_path_allowed(
+            &folder_only,
+            Path::new(r"C:\Users\me\AppData\Local\npm-cache")
+        ));
+
+        let c_only = ScanConfig {
+            restrict_rules: true,
+            drives: vec!["C:".to_string()],
+            ..Default::default()
+        };
+        assert!(rule_path_allowed(
+            &c_only,
+            Path::new(r"C:\Users\me\AppData\Local\npm-cache")
+        ));
+        assert!(!rule_path_allowed(
+            &c_only,
+            Path::new(r"D:\Users\me\AppData\Local\npm-cache")
+        ));
+    }
+
     #[test]
     fn cancelled_scan_records_warning() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -834,6 +978,7 @@ mod tests {
             roots: vec![tmp.path().to_path_buf()],
             project_scan_roots: vec![tmp.path().to_path_buf()],
             discover_large_folders: false,
+            ..Default::default()
         };
         let cancel = AtomicBool::new(true); // pre-cancelled
         let report = run_scan(&cfg, &cancel, &mut |_ev| {});

@@ -5,7 +5,7 @@
 //! macOS/Linux later is a config change, not a rewrite. We deliberately avoid
 //! pulling in the `dirs` crate — `std::env` is enough for our needs.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Expand an env-templated path spec into a concrete, **existing** path.
 ///
@@ -225,6 +225,51 @@ pub fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// Normalize a drive mount spec (`"c:"`, `"C:/"`, `"C:\\"`) to `"C:"`.
+///
+/// Returns `None` for anything that is not exactly one drive letter plus an
+/// optional separator. Used by both the backend and the scan-scope validation,
+/// so a client cannot smuggle in a UNC path or a relative folder as a "drive".
+pub fn normalize_mount(mount: &str) -> Option<String> {
+    let trimmed = mount.trim().trim_end_matches(['\\', '/']);
+    let mut chars = trimmed.chars();
+    let letter = chars.next()?;
+    if !letter.is_ascii_alphabetic() {
+        return None;
+    }
+    if chars.next() != Some(':') || chars.next().is_some() {
+        return None;
+    }
+    Some(format!("{}:", letter.to_ascii_uppercase()))
+}
+
+/// The drive mount a path lives on (`"C:"`), or `None` for UNC/device paths.
+///
+/// Handles Windows verbatim prefixes (`\\?\C:\...`), which is what
+/// `std::fs::canonicalize` returns. Without that arm, a canonicalized path
+/// would be reported as `//?/C:` and fail every mount comparison.
+pub fn mount_key(path: &Path) -> Option<String> {
+    match path.components().next()? {
+        Component::Prefix(prefix) => match prefix.kind() {
+            std::path::Prefix::Disk(letter) | std::path::Prefix::VerbatimDisk(letter) => {
+                Some(format!("{}:", (letter as char).to_ascii_uppercase()))
+            }
+            // UNC shares, device namespaces and verbatim UNC paths are not
+            // local drive letters and are deliberately excluded from drive
+            // scope.
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Is `path` on one of `drives`? An empty `drives` list means "no filter".
+pub fn path_is_on_drives(path: &Path, drives: &[String]) -> bool {
+    drives.is_empty()
+        || mount_key(path)
+            .is_some_and(|mount| drives.iter().any(|d| d.eq_ignore_ascii_case(&mount)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +360,28 @@ mod tests {
         // The full `expand` includes an existence check, so a bogus path is
         // rejected even though the variable is set.
         assert!(expand("%USERPROFILE%/this/does/not/exist/xyzzy").is_none());
+    }
+
+    #[test]
+    fn mount_specs_normalize_to_a_single_letter() {
+        assert_eq!(normalize_mount("c:").as_deref(), Some("C:"));
+        assert_eq!(normalize_mount("D:/").as_deref(), Some("D:"));
+        assert_eq!(normalize_mount(r"E:\").as_deref(), Some("E:"));
+        assert_eq!(normalize_mount("C:\\Users"), None);
+        assert_eq!(normalize_mount("CC:"), None);
+        assert_eq!(normalize_mount("1:"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn mount_key_handles_verbatim_paths() {
+        assert_eq!(mount_key(Path::new(r"C:\Users\a")), Some("C:".into()));
+        assert_eq!(mount_key(Path::new(r"\\?\C:\Users\a")), Some("C:".into()));
+        assert_eq!(mount_key(Path::new(r"\\server\share\x")), None);
+    }
+
+    #[test]
+    fn an_empty_drive_filter_accepts_everything() {
+        assert!(path_is_on_drives(Path::new("anything"), &[]));
     }
 }

@@ -6,7 +6,9 @@
   "description": "Safai — a Windows-first, developer-focused disk-cleanup desktop app.",
   "scripts": {
     "dev": "vite",
+    "dev:landing": "npm --prefix landing run dev",
     "build": "vite build",
+    "build:landing": "npm --prefix landing run build",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "assets:banner": "node scripts/render-asset.mjs assets/banner.html assets/safai-banner.png 1280 440",

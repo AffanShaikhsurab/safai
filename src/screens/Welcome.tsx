@@ -1,97 +1,231 @@
-import { type Component, Show, createMemo, createSignal, onMount } from "solid-js";
+import { type Component, For, Show, createMemo, createSignal, onMount } from "solid-js";
 import { appStore } from "../state/store";
-import {
-  defaultRoots,
-  detectTools,
-  driveInfo,
-  pickFolder,
-} from "../lib/tauri";
+import { detectTools, pickFolders } from "../lib/tauri";
 import { formatBytes, splitBytes } from "../lib/format";
+import { aggregateDrives, perDriveTotals } from "../lib/drives";
+import type { DriveEntry } from "../lib/types";
 import Dial from "../components/Dial";
 
 /**
- * Clean · setup — the dial control panel (ported from docs/mockup.html):
- * two top cards (free space + deep-scan toggle), the big drive-usage dial with
- * a round Scan button beside it, and two segmented cards (scan mode /
- * destination). "Add folder" is kept as a small secondary affordance so the
- * clean look is preserved without losing the ability to include custom roots.
+ * Clean · setup — drive scope, scan depth and destination.
+ *
+ * Multi-drive is first-class here: the list is the scope. The dial is an
+ * aggregate of the selected volumes (never one dial per drive), and the only
+ * primary action is still one Scan button.
  */
 const Welcome: Component = () => {
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
   onMount(async () => {
     try {
-      const [roots, tools] = await Promise.all([defaultRoots(), detectTools()]);
-      if (appStore.state.roots.length === 0) appStore.setRoots(roots);
+      const tools = await detectTools();
       appStore.setTools(tools);
-
-      const probe = roots[0] ?? "C:/";
-      try {
-        appStore.setDriveBefore(await driveInfo(probe));
-      } catch {
-        // Non-fatal: dial falls back to placeholder text.
-      }
+      // Welcome can be the first screen a user lands on after navigation, so
+      // make sure the scope is hydrated even if App's bootstrap is still busy.
+      if (appStore.state.drives.length === 0) await appStore.hydrateDrives();
     } catch (e) {
       setLoadError(String(e));
     }
   });
 
-  const drive = () => appStore.state.driveBefore;
-  const usedPct = createMemo(() => {
-    const d = drive();
-    if (!d || d.totalBytes <= 0) return 0;
-    return Math.min(
-      100,
-      Math.round(((d.totalBytes - d.freeBytes) / d.totalBytes) * 100),
-    );
-  });
-  const free = createMemo(() => splitBytes(drive()?.freeBytes ?? 0));
+  const drives = () => appStore.state.drives;
+  const selectedDrives = createMemo(() =>
+    drives().filter((d) => appStore.state.selectedDrives.includes(d.mount)),
+  );
+  const aggregate = createMemo(() => aggregateDrives(selectedDrives()));
+  const free = createMemo(() => splitBytes(aggregate().freeBytes));
 
-  const addFolder = async () => {
-    const folder = await pickFolder();
-    if (folder) appStore.addRoot(folder);
+  const lastFound = createMemo(() => {
+    const report = appStore.state.report;
+    if (!report) return new Map<string, number>();
+    const totals = perDriveTotals(report.groups.flatMap((g) => g.items));
+    return new Map(totals.flatMap((t) => (t.mount ? [[t.mount, t.bytes]] : [])));
+  });
+
+  const selectedCount = () => appStore.state.selectedDrives.length;
+  const isSelected = (drive: DriveEntry) =>
+    appStore.state.selectedDrives.includes(drive.mount);
+
+  const lowSpace = (drive: DriveEntry) =>
+    drive.readable && (drive.usedPercent ?? 0) >= 85;
+
+  const lastLabel = (drive: DriveEntry): string => {
+    if (!drive.readable) return "unavailable";
+    if (!appStore.state.report) return "not scanned yet";
+    const bytes = lastFound().get(drive.mount) ?? 0;
+    return bytes > 0 ? `${formatBytes(bytes)} last scan` : "clean last scan";
+  };
+
+  const addFolders = async () => {
+    const folders = await pickFolders();
+    for (const folder of folders) appStore.addFolder(folder);
   };
 
   const startScan = () => {
-    const roots = [...appStore.state.roots];
-    if (roots.length === 0) return;
-    // Store-owned orchestration: the scan survives navigation between views.
-    void appStore.runScan(roots);
+    if (selectedCount() === 0 && appStore.state.folders.length === 0) return;
+    void appStore.runScan();
   };
 
-  const canScan = () => appStore.state.roots.length > 0;
+  const canScan = () =>
+    selectedCount() > 0 || appStore.state.folders.length > 0;
 
   return (
     <div class="stage animate-rise">
-      {/* Top cards: free space + deep-scan toggle */}
+      {/* Top cards: aggregate free space + selected drive count */}
       <div class="toprow">
         <div class="card topcard">
           <div>
             <div class="k">Free space</div>
-            <div class="s">{drive()?.mount ?? "Drive C:"}</div>
+            <div class="s">
+              {aggregate().count === 1
+                ? selectedDrives()[0]?.mount ?? "Drive"
+                : `across ${aggregate().count} drives`}
+            </div>
           </div>
-          <div class="val">{formatBytes(drive()?.freeBytes ?? 0)}</div>
+          <div class="val">{formatBytes(aggregate().freeBytes)}</div>
         </div>
         <div class="card topcard">
           <div>
-            <div class="k">Deep scan</div>
-            <div class="s">Check large folders</div>
+            <div class="k">Drives</div>
+            <div class="s">
+              {selectedCount()} of {drives().length} selected
+            </div>
           </div>
-          <span
-            class="switch"
-            data-on={appStore.state.deepScan ? "true" : "false"}
-            role="switch"
-            aria-checked={appStore.state.deepScan}
-            aria-label="Deep scan"
-          >
-            <input
-              type="checkbox"
-              class="sr-check"
-              checked={appStore.state.deepScan}
-              onChange={(e) => appStore.setDeepScan(e.currentTarget.checked)}
-            />
-          </span>
+          <div class="val">
+            {aggregate().usedPercent}%
+            <span class="unit"> used</span>
+          </div>
         </div>
+      </div>
+
+      {/* Drive scope */}
+      <div class="card vol-panel">
+        <div class="vol-head">
+          <span class="k">Drives</span>
+          <span class="s">
+            {selectedCount()} of {drives().length} selected
+          </span>
+          <div class="grow" />
+          <button
+            type="button"
+            class="link"
+            onClick={() => appStore.setAllDrives(true)}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            class="link"
+            onClick={() => appStore.setAllDrives(false)}
+          >
+            None
+          </button>
+        </div>
+
+        <Show
+          when={drives().length > 0}
+          fallback={
+            <p class="sky-note">
+              We couldn't read any local drives. Windows may be blocking volume
+              access — add a folder instead.
+            </p>
+          }
+        >
+          <div class="vol-list">
+            <For each={drives()}>
+              {(drive) => {
+                const on = isSelected(drive);
+                return (
+                  <label
+                    class="vol-row"
+                    data-on={on ? "true" : "false"}
+                    data-disabled={!drive.readable ? "true" : "false"}
+                  >
+                    <input
+                      type="checkbox"
+                      class="sr-check"
+                      checked={on}
+                      disabled={!drive.readable}
+                      aria-label={`Scan ${drive.mount} ${drive.label}`}
+                      onChange={(e) =>
+                        appStore.setDriveSelected(
+                          drive.mount,
+                          e.currentTarget.checked,
+                        )
+                      }
+                    />
+                    <span
+                      class="vol-check"
+                      data-on={on ? "true" : "false"}
+                      aria-hidden="true"
+                    />
+                    <span class="vol-name">
+                      <span class="nm">
+                        {drive.mount}
+                        <Show when={drive.label}>
+                          <span class="vol-label"> · {drive.label}</span>
+                        </Show>
+                      </span>
+                      <span class="ds">
+                        {drive.readable
+                          ? `${formatBytes(drive.freeBytes)} free of ${formatBytes(
+                              drive.totalBytes,
+                            )}`
+                          : "Unavailable right now"}
+                      </span>
+                    </span>
+                    <Show when={drive.system}>
+                      <span class="vol-tag">System</span>
+                    </Show>
+                    <Show when={lowSpace(drive)}>
+                      <span class="vol-tag hot">Low space</span>
+                    </Show>
+                    <span class="vol-meter" aria-hidden="true">
+                      <i
+                        data-hot={lowSpace(drive) ? "true" : "false"}
+                        style={{ width: `${drive.usedPercent ?? 0}%` }}
+                      />
+                    </span>
+                    <span class="vol-pct">
+                      {drive.usedPercent === null
+                        ? "—"
+                        : `${Math.round(drive.usedPercent)}%`}
+                    </span>
+                    <span class="vol-last">{lastLabel(drive)}</span>
+                  </label>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+
+        <Show when={appStore.state.folders.length > 0}>
+          <div class="vol-folders">
+            <For each={appStore.state.folders}>
+              {(folder) => (
+                <div class="vol-folder">
+                  <span class="vol-folder-name" title={folder}>
+                    {folder}
+                  </span>
+                  <button
+                    type="button"
+                    class="link"
+                    title={`Stop scanning ${folder}`}
+                    onClick={() => appStore.removeFolder(folder)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+
+        <Show when={selectedCount() < drives().length}>
+          <p class="sky-note">
+            Known caches are only looked for on the drives you pick.
+          </p>
+        </Show>
       </div>
 
       {/* Dial + Scan button */}
@@ -99,14 +233,16 @@ const Welcome: Component = () => {
         <div class="dial-spacer" aria-hidden="true" />
 
         <Dial
-          pct={usedPct()}
+          pct={aggregate().usedPercent}
           big={free().value}
           unit={free().unit}
           cap="Free"
           sub={
-            drive()
-              ? `of ${formatBytes(drive()!.totalBytes)} · ${usedPct()}% used`
-              : "Detecting drive…"
+            aggregate().count === 1
+              ? `${selectedDrives()[0]?.mount ?? "Drive"} · ${
+                  aggregate().usedPercent
+                }% used`
+              : `across ${aggregate().count} drives · ${aggregate().usedPercent}% used`
           }
         />
 
@@ -116,7 +252,9 @@ const Welcome: Component = () => {
             class="round mint"
             disabled={!canScan()}
             onClick={startScan}
-            title="Scan for reclaimable space"
+            title={`Scan ${selectedCount()} drive${
+              selectedCount() === 1 ? "" : "s"
+            }`}
           >
             <svg
               viewBox="0 0 24 24"
@@ -137,14 +275,15 @@ const Welcome: Component = () => {
       <div class="bottomrow">
         <div class="card segcard">
           <div>
-            <div class="k">Scan mode</div>
+            <div class="k">Scan depth</div>
             <div class="cur">{appStore.state.deepScan ? "Deep" : "Quick"}</div>
           </div>
-          <div class="segmented" role="group" aria-label="Scan mode">
+          <div class="segmented" role="group" aria-label="Scan depth">
             <button
               type="button"
               data-on={!appStore.state.deepScan ? "true" : "false"}
               onClick={() => appStore.setDeepScan(false)}
+              title="Known caches and project folders"
             >
               Quick
             </button>
@@ -152,6 +291,7 @@ const Welcome: Component = () => {
               type="button"
               data-on={appStore.state.deepScan ? "true" : "false"}
               onClick={() => appStore.setDeepScan(true)}
+              title="Also sizes large folders on the selected drives"
             >
               Deep
             </button>
@@ -184,21 +324,36 @@ const Welcome: Component = () => {
         </div>
       </div>
 
+      <Show when={appStore.state.deepScan && selectedCount() > 1}>
+        <p class="sky-note">
+          Deep scan also sizes large folders on each selected drive. It can take
+          several minutes on a data drive; Quick finds known caches and projects
+          faster.
+        </p>
+      </Show>
+
       {/* Secondary affordance: scan scope + add folder */}
       <div class="scope-row">
         <span>
-          Scanning {appStore.state.roots.length} location
-          {appStore.state.roots.length === 1 ? "" : "s"}
+          Scanning {selectedCount()} drive{selectedCount() === 1 ? "" : "s"}
+          <Show when={appStore.state.folders.length > 0}>
+            {" "}
+            · {appStore.state.folders.length} folder
+            {appStore.state.folders.length === 1 ? "" : "s"}
+          </Show>
         </span>
         <span aria-hidden="true">·</span>
         <button
           type="button"
           class="link"
-          onClick={addFolder}
-          title="Add one of your own folders to the scan"
+          onClick={addFolders}
+          title="Add one or more of your own folders to the scan"
         >
-          + Add folder
+          + Add folders
         </button>
+        <Show when={!canScan()}>
+          <span class="err-line">Pick at least one drive to scan.</span>
+        </Show>
       </div>
 
       <Show when={loadError()} keyed>

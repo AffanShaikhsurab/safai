@@ -1,5 +1,7 @@
 import {
   type Component,
+  For,
+  Show,
   createMemo,
   createSignal,
   onCleanup,
@@ -7,7 +9,8 @@ import {
 } from "solid-js";
 import { appStore } from "../state/store";
 import { cancelScan } from "../lib/tauri";
-import { splitBytes } from "../lib/format";
+import { formatBytes, splitBytes } from "../lib/format";
+import { mountOfPath } from "../lib/drives";
 import Dial from "../components/Dial";
 
 /**
@@ -57,9 +60,24 @@ const Scanning: Component = () => {
     if (stopping()) return "Finishing up…";
     const p = progress().currentPath;
     if (!p) return "Starting…";
+    // `currentPath` is sometimes a human sentence ("Measuring 12 folders…"),
+    // so only prefix a drive when it really looks like a path.
+    const mount = mountOfPath(p);
     const parts = p.split(/[\\/]/).filter(Boolean);
-    return parts.length ? parts[parts.length - 1] : p;
+    const name = parts.length ? parts[parts.length - 1] : p;
+    return mount ? `${mount} · ${name}` : name;
   };
+
+  /** Selected drives, with live found bytes from real `Found` item paths. */
+  const chips = createMemo(() =>
+    appStore.state.drives
+      .filter((d) => appStore.state.selectedDrives.includes(d.mount))
+      .map((d) => ({
+        mount: d.mount,
+        label: d.label,
+        bytes: appStore.state.foundByDrive[d.mount] ?? 0,
+      })),
+  );
 
   // Stop & keep: flip the flag; the awaiting scan() resolves → Review.
   const stopAndKeep = async () => {
@@ -147,10 +165,25 @@ const Scanning: Component = () => {
         </div>
       </div>
 
+      <Show when={chips().length > 1}>
+        <div class="drive-chips">
+          <For each={chips()}>
+            {(chip) => (
+              <span class="chip drive-chip" data-on="true">
+                <span class="dot" aria-hidden="true" />
+                {chip.mount}
+                <b>{formatBytes(chip.bytes)}</b>
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+
       <div class="card infocard">
         <div class="l">Scanning</div>
         <div class="r" title={progress().currentPath}>
           {pct()}% · {progress().rulesChecked}/{progress().rulesTotal} checks ·{" "}
+          {chips().length} drive{chips().length === 1 ? "" : "s"} ·{" "}
           {progress().currentPath || "starting…"}
         </div>
       </div>

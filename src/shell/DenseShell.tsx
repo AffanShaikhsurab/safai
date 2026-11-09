@@ -65,8 +65,11 @@ const DenseShell: Component<{ children: JSX.Element; footer?: JSX.Element }> = (
 
         <div class="dense-grp">Scope</div>
         <div class="dense-stat">
-          <span>Roots</span>
-          <span class="v">{appStore.state.roots.length || "—"}</span>
+          <span>Drives</span>
+          <span class="v">
+            {appStore.state.selectedDrives.length || "—"}/
+            {appStore.state.drives.length || "—"}
+          </span>
         </div>
         <div class="dense-stat">
           <span>Lifetime</span>

@@ -9,6 +9,7 @@ import { createMemo } from "solid-js";
 import { appStore } from "../../state/store";
 import { categoryColor } from "../../lib/layout";
 import { categoryMeta } from "../../lib/categories";
+import { filterByDrive, perDriveTotals } from "../../lib/drives";
 import type { CategoryGroup, CleanupItem, SafetyTier } from "../../lib/types";
 import {
   groupProjects,
@@ -40,24 +41,34 @@ export interface FlatRow {
 
 export function useClean() {
   const report = () => appStore.state.report;
+  const driveFilter = () => appStore.state.driveFilter;
 
-  const hasItems = createMemo(() => {
-    const r = report();
-    return !!r && r.groups.some((g) => g.items.length > 0);
-  });
+  const allItems = createMemo<CleanupItem[]>(
+    () => report()?.groups.flatMap((g) => g.items) ?? [],
+  );
+
+  /** Every drive present in the report, largest first. */
+  const driveTotals = createMemo(() => perDriveTotals(allItems()));
+
+  const hasAnyItems = createMemo(() => allItems().length > 0);
+
+  const hasVisibleItems = createMemo(() =>
+    filterByDrive(allItems(), driveFilter()).length > 0,
+  );
 
   /** Categories largest-first, each with its items largest-first. */
   const groups = createMemo<CleanGroup[]>(() => {
     const r = report();
     if (!r) return [];
     const theme = appStore.state.theme;
+    const filter = driveFilter();
 
     // Dev-project artifacts get their own per-project panel (see
     // `projects` below), so they're left out of the category view.
     return [...r.groups]
       .map((group) => ({
         ...group,
-        items: group.items.filter((it) => !isDevItem(it)),
+        items: filterByDrive(group.items, filter).filter((it) => !isDevItem(it)),
       }))
       .map((group) => ({
         ...group,
@@ -108,9 +119,7 @@ export function useClean() {
 
   /** Dev projects with regenerable folders, most inactive first. */
   const projects = createMemo<DevProject[]>(() => {
-    const r = report();
-    if (!r) return [];
-    const items = r.groups.flatMap((g) => g.items).filter(isDevItem);
+    const items = filterByDrive(allItems(), driveFilter()).filter(isDevItem);
     return groupProjects(items, Math.floor(Date.now() / 1000));
   });
 
@@ -126,7 +135,14 @@ export function useClean() {
 
   return {
     report,
-    hasItems,
+    allItems,
+    driveTotals,
+    driveFilter,
+    setDriveFilter: appStore.setDriveFilter,
+    hasAnyItems,
+    hasVisibleItems,
+    // Kept for the existing callers that mean "there is something to show".
+    hasItems: hasVisibleItems,
     groups,
     flat,
     projects,

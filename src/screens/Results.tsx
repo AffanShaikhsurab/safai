@@ -1,6 +1,7 @@
-import { type Component, Show, createSignal } from "solid-js";
+import { type Component, For, Show, createSignal } from "solid-js";
 import { appStore } from "../state/store";
 import { layoutFamily } from "../lib/layout";
+import { formatBytes } from "../lib/format";
 import { useClean } from "./clean/model";
 import CleanSky from "./clean/Sky";
 import CleanDense from "./clean/Dense";
@@ -33,28 +34,84 @@ const Results: Component = () => {
 
   return (
     <>
+      <Show when={m.driveTotals().length > 1}>
+        <div class="drive-filter" role="group" aria-label="Filter by drive">
+          <span class="lbl">Show findings on</span>
+          <button
+            type="button"
+            class="chip"
+            data-on={m.driveFilter() === null ? "true" : "false"}
+            onClick={() => m.setDriveFilter(null)}
+          >
+            All drives
+          </button>
+          <For each={m.driveTotals()}>
+            {(total) => (
+              <Show when={total.mount}>
+                {(mount) => (
+                  <button
+                    type="button"
+                    class="chip"
+                    data-on={m.driveFilter() === mount() ? "true" : "false"}
+                    onClick={() => m.setDriveFilter(mount())}
+                  >
+                    {mount()} · {formatBytes(total.bytes)}
+                  </button>
+                )}
+              </Show>
+            )}
+          </For>
+        </div>
+      </Show>
+
       <Show
-        when={m.hasItems()}
+        when={m.hasVisibleItems()}
         fallback={
-          <div class="sky-empty">
-            <div class="sky-eyebrow">ALL CLEAR</div>
-            <div class="sky-display">NOTHING
-              <br />
-              TO CLEAN
+          <Show
+            when={m.hasAnyItems()}
+            fallback={
+              <div class="sky-empty">
+                <div class="sky-eyebrow">ALL CLEAR</div>
+                <div class="sky-display">NOTHING
+                  <br />
+                  TO CLEAN
+                </div>
+                <p class="sky-lede">
+                  No reclaimable space found. Everything looks tidy.
+                </p>
+                <div class="sky-acts">
+                  <button
+                    type="button"
+                    class="sky-btn"
+                    onClick={() => appStore.setPhase("welcome")}
+                  >
+                    SCAN AGAIN
+                  </button>
+                </div>
+              </div>
+            }
+          >
+            <div class="sky-empty">
+              <div class="sky-eyebrow">NOTHING HERE</div>
+              <div class="sky-display">
+                NOTHING TO CLEAN
+                <br />
+                ON {m.driveFilter()}
+              </div>
+              <p class="sky-lede">
+                Other drives still have findings. Switch back to see them.
+              </p>
+              <div class="sky-acts">
+                <button
+                  type="button"
+                  class="sky-btn"
+                  onClick={() => m.setDriveFilter(null)}
+                >
+                  SHOW ALL DRIVES
+                </button>
+              </div>
             </div>
-            <p class="sky-lede">
-              No reclaimable space found. Everything looks tidy.
-            </p>
-            <div class="sky-acts">
-              <button
-                type="button"
-                class="sky-btn"
-                onClick={() => appStore.setPhase("welcome")}
-              >
-                SCAN AGAIN
-              </button>
-            </div>
-          </div>
+          </Show>
         }
       >
         <Show

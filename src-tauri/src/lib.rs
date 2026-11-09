@@ -108,6 +108,7 @@ pub fn run() {
             open_path,
             detect_tools,
             default_roots,
+            list_drives,
             cleanup_rules,
             drive_info,
             automation_status,

@@ -37,6 +37,7 @@ fn main() {
         roots: Vec::new(),
         project_scan_roots: roots,
         discover_large_folders: false,
+        ..Default::default()
     };
     let started = Instant::now();
     let report = run_scan(&cfg, &AtomicBool::new(false), &mut |ev| {

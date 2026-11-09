@@ -65,15 +65,16 @@ const OverviewSky: Component = () => {
             )}
         </div>
         <p class="sky-lede">
-          Across <b>{m.itemCount()} items</b>.
-          <Show when={m.drive()} keyed>
-            {(d) => (
-              <>
-                {" "}
-                That takes {d.mount} from {formatBytes(d.freeBytes)} to{" "}
-                <b>{formatBytes(m.freeAfter())}</b> free
-              </>
-            )}
+          Across <b>{m.itemCount()} items</b> on{" "}
+          <b>
+            {m.drives().length || 1} drive{m.drives().length === 1 ? "" : "s"}
+          </b>
+          .
+          <Show when={m.drives().length > 0}>
+            {" "}
+            That takes {m.drives().length === 1 ? m.drives()[0].mount : "your drives"} from{" "}
+            {formatBytes(m.aggregate().freeBytes)} to{" "}
+            <b>{formatBytes(m.freeAfter())}</b> free
           </Show>
           <Show when={appStore.state.toRecycleBin} fallback={<>.</>}>
             {" "}
@@ -96,11 +97,16 @@ const OverviewSky: Component = () => {
           <div class="k">In use</div>
           <div class="v">{m.usedPct()}%</div>
           <div class="n">
-            <Show when={m.drive()} keyed fallback={<>drive unavailable</>}>
+            <Show
+              when={m.worstDrive()}
+              keyed
+              fallback={<>drive unavailable</>}
+            >
               {(d) => (
                 <>
-                  {formatBytes(d.totalBytes - d.freeBytes)} of{" "}
-                  {formatBytes(d.totalBytes)}
+                  {d.mount} {Math.round(d.usedPercent ?? 0)}% ·{" "}
+                  {m.aggregate().count} drive
+                  {m.aggregate().count === 1 ? "" : "s"}
                 </>
               )}
             </Show>
@@ -162,6 +168,42 @@ const OverviewSky: Component = () => {
           </Show>
         </div>
       </div>
+
+      {/* Per-drive health. A drive with nothing found keeps its row: absence
+          must read as "already clean", not "not scanned". */}
+      <Show when={m.drives().length > 1}>
+        <div class="sky-sec">
+          <h3>DRIVES</h3>
+          <span class="m">{m.drives().length} volumes</span>
+          <button type="button" class="lk" onClick={review}>
+            Open in Clean →
+          </button>
+        </div>
+        <div class="sky-list">
+          <For each={m.drives()}>
+            {(drive) => (
+              <button type="button" class="sky-row" onClick={review}>
+                <span class="txt">
+                  <span class="nm">
+                    {drive.mount}
+                    {drive.label ? ` · ${drive.label}` : ""}
+                  </span>
+                  <span class="ds">
+                    {formatBytes(
+                      m.reclaimableByDrive().get(drive.mount) ?? 0,
+                    )}{" "}
+                    reclaimable · {formatBytes(drive.freeBytes)} free
+                  </span>
+                </span>
+                <span class="amt">
+                  <b>{Math.round(drive.usedPercent ?? 0)}%</b>
+                  <span>used</span>
+                </span>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
 
       {/* Where it went */}
       <Show when={m.rows().length > 0}>

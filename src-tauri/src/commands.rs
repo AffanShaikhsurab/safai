@@ -17,8 +17,8 @@ use tauri::{AppHandle, State};
 use safai_rules::{CleanupItem, ScanEvent};
 
 use crate::dto::{
-    DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveInfo, RuleInfo, SafetyTier,
-    ToolInfo,
+    DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveEntry, DriveInfo, RuleInfo,
+    SafetyTier, ToolInfo,
 };
 use crate::engine::{self, deletion_allowed, drive_mount, normalize_slashes};
 use crate::error::{Result, SafaiError};
@@ -35,7 +35,7 @@ use crate::winsys;
 /// thread; progress is streamed live via the (cloneable) `Channel`.
 #[tauri::command]
 pub async fn scan(
-    roots: Vec<String>,
+    request: engine::ScanRequest,
     on_event: Channel<ScanEvent>,
     state: State<'_, SafaiState>,
 ) -> Result<safai_rules::ScanReport> {
@@ -49,7 +49,11 @@ pub async fn scan(
     state.cancel.store(false, Ordering::SeqCst);
     let cancel = state.cancel.clone();
 
-    let cfg = engine::build_scan_config(&roots, true);
+    // Validate the scope and derive every root before touching disk. This is
+    // also where the deletion allow-list is decided; it is committed only once
+    // the scan has actually produced a report.
+    let prepared = engine::prepare_scan(&request)?;
+    let cfg = prepared.cfg.clone();
 
     // Move the blocking rayon scan off the async runtime worker threads. The
     // engine takes a `&(dyn Fn(ScanEvent) + Send + Sync)` sink; we adapt it to
@@ -64,17 +68,12 @@ pub async fn scan(
     .await
     .map_err(|e| SafaiError::Other(format!("scan task join error: {e}")))?;
 
-    // Populate the id → item map from the finished report so later
-    // preview/delete calls resolve ids server-side.
-    {
-        let mut items = state.last_items.lock().unwrap();
-        items.clear();
-        for group in &report.groups {
-            for item in &group.items {
-                items.insert(item.id.clone(), item.clone());
-            }
-        }
-    }
+    let mut report = report;
+    report.warnings.extend(prepared.warnings.iter().cloned());
+
+    // Populate the id → item map and the deletion scope together. The activity
+    // gate is still held, so no delete can observe half of this update.
+    engine::commit_scan(&state, &prepared, &report);
 
     Ok(report)
 }
@@ -213,6 +212,15 @@ pub fn open_path(path: String, app: AppHandle) -> Result<()> {
 // detect_tools / default_roots / cleanup_rules
 // -------------------------------------------------------------------------
 
+/// Every readable fixed drive, with label and free space.
+#[tauri::command]
+pub fn list_drives() -> Vec<DriveEntry> {
+    crate::winsys::drive_details()
+        .into_iter()
+        .map(DriveEntry::from)
+        .collect()
+}
+
 /// Which dev tools are installed (UI chips + rule gating).
 #[tauri::command]
 pub fn detect_tools() -> Vec<ToolInfo> {
@@ -264,7 +272,12 @@ pub fn cleanup_rules() -> Vec<RuleInfo> {
 /// platforms report zeros, as Safai is Windows-first.
 #[tauri::command]
 pub fn drive_info(path: String) -> Result<DriveInfo> {
-    let p = PathBuf::from(&path);
+    // A bare `"C:"` means "the current directory on C:" to Win32. Normalize it
+    // to the volume root before asking for free space.
+    let p = match safai_rules::normalize_mount(&path) {
+        Some(mount) => PathBuf::from(format!("{mount}/")),
+        None => PathBuf::from(&path),
+    };
     let mount = drive_mount(&p);
 
     match winsys::disk_free_total(&p) {

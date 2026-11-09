@@ -1,9 +1,11 @@
 import { type Component, For, Show, createSignal } from "solid-js";
 import { appStore } from "../state/store";
 import { DEFAULT_STATS, saveStats } from "../lib/stats";
+import { formatBytes } from "../lib/format";
 import { type ThemeName } from "../lib/prefs";
 import { COMET_STEPS, PIXEL_STEPS, STAR_STEPS } from "../lib/sky";
 import { APP_VERSION_LABEL } from "../lib/version";
+import { pickFolders } from "../lib/tauri";
 import ThemeSwatch from "../components/ThemeSwatch";
 
 interface ThemeOption {
@@ -235,6 +237,115 @@ const Settings: Component = () => {
           </div>
         </div>
       </Show>
+
+      {/* Drive scope — the same selection as Welcome, editable here too. */}
+      <div class="card set-card">
+        <div class="h">Drives</div>
+        <div class="set-row">
+          <div>
+            <div class="rl">Remembered scope</div>
+            <div class="rd">
+              {appStore.state.selectedDrives.length} of{" "}
+              {appStore.state.drives.length} drives selected · changes apply to
+              the next scan.
+            </div>
+          </div>
+          <div class="set-actions">
+            <button
+              type="button"
+              class="link-quiet"
+              onClick={() => appStore.setAllDrives(true)}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              class="link-quiet"
+              onClick={() => appStore.setAllDrives(false)}
+            >
+              None
+            </button>
+          </div>
+        </div>
+
+        <For each={appStore.state.drives}>
+          {(drive) => {
+            const on = () =>
+              appStore.state.selectedDrives.includes(drive.mount);
+            return (
+              <div class="set-row">
+                <div>
+                  <div class="rl">
+                    {drive.mount}
+                    {drive.label ? ` · ${drive.label}` : ""}
+                  </div>
+                  <div class="rd">
+                    {drive.readable
+                      ? `${formatBytes(drive.freeBytes)} free of ${formatBytes(
+                          drive.totalBytes,
+                        )}`
+                      : "Unavailable right now"}
+                  </div>
+                </div>
+                <span
+                  class="switch"
+                  data-on={on() ? "true" : "false"}
+                  role="switch"
+                  aria-checked={on()}
+                  aria-label={`Scan ${drive.mount}`}
+                >
+                  <input
+                    type="checkbox"
+                    class="sr-check"
+                    checked={on()}
+                    disabled={!drive.readable}
+                    onChange={(e) =>
+                      appStore.setDriveSelected(
+                        drive.mount,
+                        e.currentTarget.checked,
+                      )
+                    }
+                  />
+                </span>
+              </div>
+            );
+          }}
+        </For>
+
+        <For each={appStore.state.folders}>
+          {(folder) => (
+            <div class="set-row">
+              <div class="rd" title={folder}>
+                {folder}
+              </div>
+              <button
+                type="button"
+                class="link-quiet"
+                onClick={() => appStore.removeFolder(folder)}
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </For>
+
+        <div class="set-row flush">
+          <div class="rl-wrap">
+            <div class="rl">Custom folders</div>
+            <div class="rd">Add folders outside the selected drives.</div>
+          </div>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            onClick={async () => {
+              const folders = await pickFolders();
+              for (const folder of folders) appStore.addFolder(folder);
+            }}
+          >
+            + Add folder
+          </button>
+        </div>
+      </div>
 
       {/* Scan preferences — store-level defaults (no backend contract change) */}
       <div class="card set-card">

@@ -1,7 +1,7 @@
 import { type Component, Show, onMount } from "solid-js";
 import { appStore } from "../state/store";
 import { loadStats } from "../lib/stats";
-import { defaultRoots, detectTools, driveInfo } from "../lib/tauri";
+import { detectTools } from "../lib/tauri";
 import { layoutFamily } from "../lib/layout";
 import OverviewSky from "./overview/Sky";
 import OverviewDense from "./overview/Dense";
@@ -26,9 +26,8 @@ const Dashboard: Component = () => {
       // Keep whatever stats are already in the store.
     }
     try {
-      if (!appStore.state.driveBefore) {
-        const roots = await defaultRoots();
-        appStore.setDriveBefore(await driveInfo(roots[0] ?? "C:/"));
+      if (appStore.state.drives.length === 0) {
+        await appStore.hydrateDrives();
       }
     } catch {
       // Non-fatal: the drive stat renders a dash.

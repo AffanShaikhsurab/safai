@@ -110,8 +110,163 @@ pub fn fixed_drives() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
 
+// ---------------------------------------------------------------------------
+// Volume details (labels, serials, free space)
+// ---------------------------------------------------------------------------
+
+/// Everything the UI needs to describe one fixed volume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeDetail {
+    /// Display mount, e.g. `"C:"`.
+    pub mount: String,
+    /// Root path safe to pass to scan commands, e.g. `"C:/"`.
+    pub root: String,
+    pub label: String,
+    pub file_system: String,
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+    /// Windows volume serial number, or `0` when it could not be read.
+    pub serial: u32,
+    /// False when the volume is locked, empty, or inaccessible.
+    pub readable: bool,
+    pub system: bool,
+    pub kind: String,
+}
+
+/// Enumerate ready fixed drives with label, filesystem and free space.
+///
+/// Fixed drives only, matching [`fixed_drives`]: removable, network, optical and
+/// RAM volumes are deliberately excluded. A volume that exists but cannot be
+/// read (BitLocker locked, no media, access denied) is still returned with
+/// `readable = false`, so the UI can show it as unavailable rather than
+/// silently pretending it does not exist.
+#[cfg(windows)]
+pub fn drive_details() -> Vec<VolumeDetail> {
+    use std::collections::HashSet;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
+    };
+
+    const DRIVE_FIXED: u32 = 3;
+    const MAX_VOLUME_NAME: usize = 261; // MAX_PATH + 1, in TCHARs
+
+    let system = system_drive_mount();
+    // SAFETY: GetLogicalDrives takes no arguments and returns a bitmask.
+    let mask = unsafe { GetLogicalDrives() };
+    let mut out = Vec::new();
+    // SUBST drives report DRIVE_FIXED and share the host volume's serial.
+    // Keeping the first (lowest-letter) entry avoids scanning the same tree
+    // twice, which would double-count every byte.
+    let mut seen: HashSet<(u32, u64)> = HashSet::new();
+
+    for bit in 0..26u32 {
+        if mask & (1 << bit) == 0 {
+            continue;
+        }
+        let letter = char::from(b'A' + bit as u8);
+        let root = format!("{letter}:\\");
+        let wide: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+
+        // SAFETY: `wide` is a valid, NUL-terminated root path, and the API only
+        // reads it.
+        let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
+        if drive_type != DRIVE_FIXED {
+            continue;
+        }
+
+        let mut label = [0u16; MAX_VOLUME_NAME];
+        let mut fs_name = [0u16; MAX_VOLUME_NAME];
+        let mut serial = 0u32;
+        let mut max_component = 0u32;
+        let mut flags = 0u32;
+
+        // SAFETY: both buffers are valid for MAX_VOLUME_NAME u16s and outlive
+        // the call; every out-pointer references a live stack local.
+        let info_ok = unsafe {
+            GetVolumeInformationW(
+                wide.as_ptr(),
+                label.as_mut_ptr(),
+                label.len() as u32,
+                &mut serial,
+                &mut max_component,
+                &mut flags,
+                fs_name.as_mut_ptr(),
+                fs_name.len() as u32,
+            )
+        } != 0;
+
+        let mount = format!("{letter}:");
+        let space = disk_free_total(std::path::Path::new(&root));
+        let (free_bytes, total_bytes) = space.unwrap_or((0, 0));
+
+        if serial != 0 && !seen.insert((serial, total_bytes)) {
+            continue;
+        }
+
+        out.push(VolumeDetail {
+            mount: mount.clone(),
+            root: format!("{letter}:/"),
+            label: utf16z(&label),
+            file_system: utf16z(&fs_name),
+            free_bytes,
+            total_bytes,
+            serial,
+            readable: info_ok && space.is_some() && total_bytes > 0,
+            system: system.as_deref() == Some(mount.as_str()),
+            kind: "fixed".to_string(),
+        });
+    }
+
+    out.sort_by(|a, b| b.system.cmp(&a.system).then_with(|| a.mount.cmp(&b.mount)));
+    out
+}
+
+#[cfg(not(windows))]
+pub fn drive_details() -> Vec<VolumeDetail> {
+    Vec::new()
+}
+
+/// The drive Windows itself boots from, normally `"C:"`.
+///
+/// `%SystemDrive%` can legitimately be `D:` on a custom install, so this is
+/// never hard-coded. Falls back to `%SystemRoot%`, then the first fixed drive.
+pub fn system_drive_mount() -> Option<String> {
+    let system_drive = std::env::var("SystemDrive").ok();
+    let system_root = std::env::var("SystemRoot").ok();
+    let drives: Vec<String> = fixed_drives()
+        .iter()
+        .filter_map(|p| safai_rules::mount_key(p))
+        .collect();
+    pick_system_mount(system_drive.as_deref(), system_root.as_deref(), &drives)
+}
+
+/// Pure resolver for [`system_drive_mount`], kept separate so it can be tested
+/// without touching the real environment.
+pub fn pick_system_mount(
+    system_drive: Option<&str>,
+    system_root: Option<&str>,
+    drives: &[String],
+) -> Option<String> {
+    if let Some(mount) = system_drive.and_then(safai_rules::normalize_mount) {
+        return Some(mount);
+    }
+    if let Some(root) = system_root {
+        if let Some(mount) = safai_rules::mount_key(std::path::Path::new(root)) {
+            return Some(mount);
+        }
+    }
+    drives.first().cloned()
+}
+
+/// Decode a NUL-terminated UTF-16 buffer.
+fn utf16z(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end])
+}
+
 /// Percentage of the volume containing `path` that is in use (0–100), or
 /// `None` if the volume can't be queried or reports a zero size.
+#[allow(dead_code)]
 pub fn disk_used_percent(path: &Path) -> Option<f64> {
     let (free, total) = disk_free_total(path)?;
     if total == 0 {
@@ -287,4 +442,66 @@ fn set_background(on: bool) -> bool {
 #[cfg(not(windows))]
 fn set_background(_on: bool) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_drive_env_wins() {
+        assert_eq!(
+            pick_system_mount(Some("d:"), Some(r"C:\Windows"), &["C:".into()]),
+            Some("D:".into())
+        );
+    }
+
+    #[test]
+    fn system_drive_falls_back_to_system_root() {
+        assert_eq!(
+            pick_system_mount(None, Some(r"D:\Windows"), &["C:".into()]),
+            Some("D:".into())
+        );
+    }
+
+    #[test]
+    fn system_drive_falls_back_to_the_first_enumerated_drive() {
+        assert_eq!(
+            pick_system_mount(None, None, &["E:".into(), "F:".into()]),
+            Some("E:".into())
+        );
+        assert_eq!(pick_system_mount(None, None, &[]), None);
+    }
+
+    #[test]
+    fn utf16_buffers_are_trimmed_at_the_first_nul() {
+        assert_eq!(utf16z(&[b'C' as u16, b':' as u16, 0, b'X' as u16]), "C:");
+        assert_eq!(utf16z(&[]), "");
+        assert_eq!(utf16z(&[b'A' as u16, b'B' as u16]), "AB");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_enumeration_finds_the_system_volume() {
+        let details = drive_details();
+        assert!(
+            !details.is_empty(),
+            "a Windows machine has at least one fixed drive"
+        );
+        let system = system_drive_mount().expect("system drive");
+        assert!(
+            details
+                .iter()
+                .any(|d| d.system && d.mount.eq_ignore_ascii_case(&system)),
+            "the system drive {system} should be flagged"
+        );
+        assert!(details.iter().all(|d| d.kind == "fixed"));
+        assert!(details.iter().any(|d| d.readable));
+        if std::path::Path::new(r"D:\").is_dir() {
+            assert!(
+                details.iter().any(|d| d.mount == "D:"),
+                "a mounted D: should be enumerated"
+            );
+        }
+    }
 }

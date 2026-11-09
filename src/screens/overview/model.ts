@@ -8,7 +8,8 @@ import { createMemo } from "solid-js";
 import { appStore } from "../../state/store";
 import { categoryColor } from "../../lib/layout";
 import { categoryMeta } from "../../lib/categories";
-import type { CategoryGroup } from "../../lib/types";
+import { aggregateDrives, perDriveTotals } from "../../lib/drives";
+import type { CategoryGroup, DriveEntry } from "../../lib/types";
 
 export interface GroupRow {
   group: CategoryGroup;
@@ -42,7 +43,21 @@ function groupTier(group: CategoryGroup): "safe" | "review" | "caution" {
 export function useOverview() {
   const report = () => appStore.state.report;
   const stats = () => appStore.state.stats;
-  const drive = () => appStore.state.driveBefore;
+
+  const drives = createMemo<DriveEntry[]>(() =>
+    appStore.state.drivesAfter.length > 0
+      ? appStore.state.drivesAfter
+      : appStore.state.drives,
+  );
+
+  const aggregate = createMemo(() => aggregateDrives(drives()));
+
+  /** The drive closest to full — averages hide the one that matters. */
+  const worstDrive = createMemo(() =>
+    [...drives()]
+      .filter((d) => d.readable && d.usedPercent !== null)
+      .sort((a, b) => (b.usedPercent ?? 0) - (a.usedPercent ?? 0))[0],
+  );
 
   const reclaimable = () => report()?.totalReclaimableBytes ?? 0;
 
@@ -50,29 +65,30 @@ export function useOverview() {
     () => report()?.groups.reduce((n, g) => n + g.items.length, 0) ?? 0,
   );
 
-  const usedPct = createMemo(() => {
-    const d = drive();
-    if (!d || d.totalBytes <= 0) return 0;
-    return Math.min(
-      100,
-      Math.round(((d.totalBytes - d.freeBytes) / d.totalBytes) * 100),
+  const usedPct = () => aggregate().usedPercent;
+
+  /** Reclaimable bytes per drive, derived from the report's item paths. */
+  const reclaimableByDrive = createMemo(() => {
+    const totals = perDriveTotals(
+      report()?.groups.flatMap((g) => g.items) ?? [],
+    );
+    return new Map(
+      totals.flatMap((t) => (t.mount ? [[t.mount, t.bytes]] : [])),
     );
   });
+
+  const freeAfterFor = (drive: DriveEntry): number =>
+    drive.freeBytes + (reclaimableByDrive().get(drive.mount) ?? 0);
 
   /** Projected free space after cleaning everything currently reclaimable. */
-  const freeAfter = createMemo(() => {
-    const d = drive();
-    if (!d) return 0;
-    return d.freeBytes + reclaimable();
-  });
+  const freeAfter = createMemo(() =>
+    drives().reduce((sum, drive) => sum + freeAfterFor(drive), 0),
+  );
 
   const usedAfterPct = createMemo(() => {
-    const d = drive();
-    if (!d || d.totalBytes <= 0) return 0;
-    return Math.max(
-      0,
-      Math.round(((d.totalBytes - freeAfter()) / d.totalBytes) * 100),
-    );
+    const total = aggregate().totalBytes;
+    if (total <= 0) return 0;
+    return Math.max(0, Math.round(((total - freeAfter()) / total) * 100));
   });
 
   /** Groups largest-first, with everything the row renderers need. */
@@ -103,11 +119,15 @@ export function useOverview() {
   return {
     report,
     stats,
-    drive,
+    drives,
+    aggregate,
+    worstDrive,
     reclaimable,
     itemCount,
     usedPct,
     freeAfter,
+    freeAfterFor,
+    reclaimableByDrive,
     usedAfterPct,
     rows,
   };

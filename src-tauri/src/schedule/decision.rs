@@ -52,8 +52,10 @@ pub struct Conditions {
     pub activity_busy: bool,
     /// The user is mid-flow in the Clean screens.
     pub ui_engaged: bool,
-    /// Used percentage of the watched volume, or `None` if unavailable.
+    /// Used percentage of the worst watched volume, or `None` if unavailable.
     pub disk_used_percent: Option<f64>,
+    /// Mount of the worst watched volume, for user-facing deferral copy.
+    pub worst_drive: Option<String>,
     /// Seconds since the last user input.
     pub idle_secs: u64,
     pub on_battery: bool,
@@ -73,6 +75,7 @@ impl Conditions {
             activity_busy: false,
             ui_engaged: false,
             disk_used_percent: Some(40.0),
+            worst_drive: Some("C:".to_string()),
             idle_secs: 60 * 60,
             on_battery: false,
             last_run_at: None,
@@ -156,7 +159,8 @@ pub fn decide(cfg: &ScheduleConfig, c: &Conditions) -> Decision {
                 // for power, but not once things are critical.
                 if cfg.skip_on_battery && c.on_battery && used < CRITICAL_USED_PERCENT {
                     return Decision::defer(format!(
-                        "drive is {used:.0}% full — waiting until you're on power"
+                        "drive {} is {used:.0}% full — waiting until you're on power",
+                        c.worst_drive.as_deref().unwrap_or("disk")
                     ));
                 }
                 return Decision::Run(TriggerKind::Threshold);

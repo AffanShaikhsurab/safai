@@ -17,5 +17,7 @@ pub mod scan;
 pub use model::{Category, CategoryGroup, CleanupItem, DevInfo, SafetyTier, ScanEvent, ScanReport};
 
 // Re-export the primary entry points used by WS3.
-pub use detect::{default_roots, detect_tools, project_scan_roots};
+pub use detect::{
+    default_roots, detect_tools, mount_key, normalize_mount, path_is_on_drives, project_scan_roots,
+};
 pub use scan::{label_for, run_scan, ScanConfig};

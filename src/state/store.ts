@@ -12,11 +12,13 @@ import type {
   Category,
   CleanupItem,
   DeleteEvent,
+  DriveEntry,
   DriveInfo,
   RuleInfo,
   SafetyTier,
   ScanEvent,
   ScanReport,
+  ScanRequest,
   ScheduleConfig,
   ToolInfo,
 } from "../lib/types";
@@ -26,8 +28,10 @@ import { notify } from "../lib/notify";
 import {
   automationStatus,
   cleanupRules,
+  defaultRoots,
   deleteItems,
   driveInfo,
+  listDrives,
   runAutomationNow,
   scan,
   setAutomationConfig,
@@ -35,6 +39,11 @@ import {
   stopAutomation,
 } from "../lib/tauri";
 import { loadLastReport, saveLastReport } from "../lib/report";
+import {
+  mountOfPath,
+  reconcileScope,
+  type ScopePrefs,
+} from "../lib/drives";
 import {
   DEFAULT_INACTIVE_DAYS,
   groupProjects,
@@ -47,7 +56,9 @@ import {
   DEFAULT_SCAN_PREFS,
   DEFAULT_SKY,
   DEFAULT_THEME,
+  loadScanScope,
   saveScanPrefs,
+  saveScanScope,
   saveSkyPrefs,
   saveTheme,
   type ScanPrefs,
@@ -89,6 +100,22 @@ export interface AppState {
   view: View;
   phase: Phase;
   roots: string[];
+  /** Every fixed drive the backend can see. */
+  drives: DriveEntry[];
+  /** Mounts the user chose to scan, e.g. ["C:", "D:"]. */
+  selectedDrives: string[];
+  /** True when the user's selection is "every drive" (new drives auto-join). */
+  allDrives: boolean;
+  /** Extra folders added with the picker. */
+  folders: string[];
+  /** Results filter: null = all drives. */
+  driveFilter: string | null;
+  /** Live found bytes per mount during a scan. */
+  foundByDrive: Record<string, number>;
+  /** Reclaimed bytes per mount during a cleanup. */
+  reclaimedByDrive: Record<string, number>;
+  /** Drive snapshot after the most recent cleanup. */
+  drivesAfter: DriveEntry[];
   tools: ToolInfo[];
   report: ScanReport | null;
   selected: Record<string, boolean>;
@@ -144,6 +171,14 @@ function createAppStore() {
     view: "dashboard",
     phase: "welcome",
     roots: [],
+    drives: [],
+    selectedDrives: [],
+    allDrives: true,
+    folders: [],
+    driveFilter: null,
+    foundByDrive: {},
+    reclaimedByDrive: {},
+    drivesAfter: [],
     tools: [],
     report: null,
     selected: {},
@@ -247,6 +282,169 @@ function createAppStore() {
     );
   }
 
+  // ---- Drive scope -------------------------------------------------------
+
+  function persistScope(scope: ScopePrefs) {
+    void saveScanScope(scope);
+  }
+
+  function currentScope(): ScopePrefs {
+    return {
+      drives: state.selectedDrives,
+      allDrives: state.allDrives,
+      folders: state.folders,
+    };
+  }
+
+  /** Point the shell header at the system drive, or the first selected one. */
+  function refreshPrimaryDrive() {
+    const selected = state.drives.filter(
+      (d) => d.readable && state.selectedDrives.includes(d.mount),
+    );
+    const primary =
+      selected.find((d) => d.system) ??
+      selected[0] ??
+      state.drives.find((d) => d.system && d.readable) ??
+      state.drives.find((d) => d.readable) ??
+      state.drives[0];
+    if (primary) {
+      setDriveBefore({
+        mount: primary.mount,
+        freeBytes: primary.freeBytes,
+        totalBytes: primary.totalBytes,
+      });
+    }
+  }
+
+  /**
+   * Load the volumes present right now and reconcile them with the remembered
+   * selection. First run selects every readable fixed drive; later runs keep
+   * the exact selection, dropping drives that are no longer connected.
+   */
+  async function hydrateDrives() {
+    try {
+      const drives = await listDrives();
+      // A second hydrate (Welcome + Dashboard + App can all ask) must not
+      // overwrite a selection the user just made with an older store value.
+      const saved =
+        state.drives.length > 0
+          ? {
+              drives: state.selectedDrives,
+              allDrives: state.allDrives,
+              folders: state.folders,
+            }
+          : await loadScanScope();
+      const reconciled = reconcileScope(drives, saved);
+
+      setState(
+        produce((s) => {
+          s.drives = drives;
+          s.selectedDrives = reconciled.selectedDrives;
+          s.allDrives = reconciled.allDrives;
+          s.folders = reconciled.folders;
+          s.drivesAfter = drives;
+        }),
+      );
+
+      if (
+        !saved ||
+        saved.allDrives !== reconciled.allDrives ||
+        saved.drives.join("|") !== reconciled.selectedDrives.join("|") ||
+        saved.folders.join("|") !== reconciled.folders.join("|")
+      ) {
+        persistScope({
+          drives: reconciled.selectedDrives,
+          allDrives: reconciled.allDrives,
+          folders: reconciled.folders,
+        });
+      }
+
+      // Tell the bootstrap whether this is a first run on a multi-drive
+      // machine. It uses that to default to Quick: Deep discovery on a data
+      // drive is the only genuinely new multi-minute cost.
+      const firstMultiDriveRun =
+        !saved && reconciled.selectedDrives.length > 1;
+
+      refreshPrimaryDrive();
+
+      // Non-Windows / no volume enumeration: fall back to the profile folders
+      // so Safai remains usable as a folder scanner.
+      if (drives.length === 0) {
+        try {
+          const roots = await defaultRoots();
+          setState(
+            produce((s) => {
+              s.folders = roots;
+              s.allDrives = false;
+            }),
+          );
+        } catch {
+          // Non-fatal.
+        }
+      }
+      return firstMultiDriveRun;
+    } catch (e) {
+      console.error("loading drives failed", e);
+      return false;
+    }
+  }
+
+  function setDriveSelected(mount: string, selected: boolean) {
+    setState(
+      produce((s) => {
+        s.selectedDrives = selected
+          ? [...new Set([...s.selectedDrives, mount])]
+          : s.selectedDrives.filter((m) => m !== mount);
+        s.allDrives = false;
+      }),
+    );
+    persistScope(currentScope());
+    refreshPrimaryDrive();
+  }
+
+  function setAllDrives(selected: boolean) {
+    const mounts = state.drives
+      .filter((drive) => drive.readable && drive.kind === "fixed")
+      .map((drive) => drive.mount);
+    setState(
+      produce((s) => {
+        s.allDrives = selected;
+        s.selectedDrives = selected ? mounts : [];
+      }),
+    );
+    persistScope(currentScope());
+    refreshPrimaryDrive();
+  }
+
+  function addFolder(folder: string) {
+    const normalized = folder.replace(/[\\/]+$/, "");
+    if (!normalized) return;
+    setState(
+      produce((s) => {
+        if (
+          !s.folders.some(
+            (existing) => existing.toLowerCase() === normalized.toLowerCase(),
+          )
+        ) {
+          s.folders.push(normalized);
+        }
+      }),
+    );
+    persistScope(currentScope());
+  }
+
+  function removeFolder(folder: string) {
+    setState(
+      "folders",
+      state.folders.filter((f) => f !== folder),
+    );
+    persistScope(currentScope());
+  }
+
+  function setDriveFilter(mount: string | null) {
+    setState("driveFilter", mount);
+  }
+
   function setTools(tools: ToolInfo[]) {
     setState("tools", tools);
   }
@@ -338,16 +536,20 @@ function createAppStore() {
   }
 
   /** Reset progress + report state before starting a new scan. */
-  function beginScan(roots: string[]) {
+  function beginScan(request: ScanRequest) {
     setState(
       produce((s) => {
-        s.roots = roots;
+        s.roots = [...request.drives, ...request.folders];
         s.report = null;
         s.selected = {};
         s.progress = emptyProgress();
         s.driveAfter = null;
+        s.drivesAfter = [];
         s.scanStartedAt = Date.now();
         s.phase = "scanning";
+        s.driveFilter = null;
+        s.foundByDrive = {};
+        s.reclaimedByDrive = {};
       }),
     );
   }
@@ -374,6 +576,9 @@ function createAppStore() {
             const item = event.data.item;
             s.selected[item.id] = item.selectedByDefault;
             s.progress.itemCount += 1;
+            const mount = mountOfPath(item.path) ?? "other";
+            s.foundByDrive[mount] =
+              (s.foundByDrive[mount] ?? 0) + item.sizeBytes;
           }),
         );
         break;
@@ -458,13 +663,21 @@ function createAppStore() {
    * and back never cancels or loses the run. Cancellation is explicit only
    * (via the Scanning screen's Stop/Cancel buttons calling `cancel_scan`).
    */
-  async function runScan(roots: string[]) {
+  async function runScan() {
     // Guard against starting a second scan while one is already running.
     if (state.phase === "scanning") return;
+    if (state.selectedDrives.length === 0 && state.folders.length === 0) {
+      return;
+    }
 
-    beginScan(roots);
+    const request: ScanRequest = {
+      drives: [...state.selectedDrives],
+      folders: [...state.folders],
+      deep: state.deepScan,
+    };
+    beginScan(request);
     try {
-      const report = await scan(roots, applyScanEvent);
+      const report = await scan(request, applyScanEvent);
       // Only apply the report if we're still scanning. If the user chose
       // "Cancel & discard" (which sets phase back to "welcome"), we must not
       // resurrect the results; "Stop & keep" leaves phase as "scanning" so the
@@ -481,6 +694,40 @@ function createAppStore() {
   }
 
   /**
+   * Drop the items a cleanup removed from the live report.
+   *
+   * A skipped item stays: it is still on disk, so Results must keep offering
+   * it. Everything else was deleted (or already gone) and must stop counting
+   * toward reclaimable space on Overview.
+   */
+  function pruneReportAfterClean(ids: string[]) {
+    const skipped = new Set(state.progress.skippedItems.map((item) => item.id));
+    const removed = new Set(ids.filter((id) => !skipped.has(id)));
+    if (removed.size === 0) return;
+
+    setState(
+      produce((s) => {
+        const report = s.report;
+        if (!report) return;
+        for (const group of report.groups) {
+          group.items = group.items.filter((item) => !removed.has(item.id));
+          group.totalBytes = group.items.reduce(
+            (sum, item) => sum + item.sizeBytes,
+            0,
+          );
+        }
+        report.groups = report.groups.filter((group) => group.items.length > 0);
+        report.totalReclaimableBytes = report.groups.reduce(
+          (sum, group) => sum + group.totalBytes,
+          0,
+        );
+        for (const id of removed) delete s.selected[id];
+      }),
+    );
+    if (state.report) void saveLastReport(state.report);
+  }
+
+  /**
    * Orchestrate a full cleanup. Also store-owned so it survives navigation:
    * the deletion keeps streaming into the store even if the user switches
    * views mid-clean, and lands on Done when finished.
@@ -489,15 +736,52 @@ function createAppStore() {
     if (ids.length === 0) return;
     if (state.phase === "cleaning") return;
 
+    // Remember which drives the selection touched before the report is
+    // replaced, so Done can report per-drive before/after values.
+    const affected = new Set<string>();
+    for (const item of allItems()) {
+      if (!ids.includes(item.id)) continue;
+      const mount = mountOfPath(item.path);
+      if (mount) affected.add(mount);
+    }
+
     beginClean(ids.length);
     try {
       await deleteItems(ids, toRecycleBin, applyDeleteEvent);
-      const before = state.driveBefore;
-      if (before) {
-        try {
-          setDriveAfter(await driveInfo(before.mount));
-        } catch {
-          // Non-fatal: the Done screen falls back to the reclaimed total.
+      pruneReportAfterClean(ids);
+
+      try {
+        const after = await listDrives();
+        setState(
+          produce((s) => {
+            s.drives = after;
+            s.drivesAfter = after;
+          }),
+        );
+        refreshPrimaryDrive();
+        const systemMount = state.drives.find((d) => d.system)?.mount;
+        const primary =
+          systemMount && affected.has(systemMount)
+            ? systemMount
+            : [...affected][0];
+        const drive = after.find((d) => d.mount === primary);
+        if (drive) {
+          setDriveAfter({
+            mount: drive.mount,
+            freeBytes: drive.freeBytes,
+            totalBytes: drive.totalBytes,
+          });
+        }
+      } catch {
+        // Fall back to a single-drive probe; Done still shows the reclaimed
+        // total if even that fails.
+        const before = state.driveBefore;
+        if (before) {
+          try {
+            setDriveAfter(await driveInfo(before.mount));
+          } catch {
+            // Non-fatal.
+          }
         }
       }
       setPhase("done");
@@ -513,6 +797,13 @@ function createAppStore() {
 
 
 
+  function visible(item: CleanupItem): boolean {
+    return (
+      state.driveFilter === null ||
+      mountOfPath(item.path) === state.driveFilter
+    );
+  }
+
   function toggleCategory(category: Category, on: boolean) {
     const report = state.report;
     if (!report) return;
@@ -521,6 +812,7 @@ function createAppStore() {
         for (const group of report.groups) {
           if (group.category !== category) continue;
           for (const item of group.items) {
+            if (!visible(item)) continue;
             s.selected[item.id] = on;
           }
         }
@@ -532,6 +824,7 @@ function createAppStore() {
     setState(
       produce((s) => {
         for (const item of allItems()) {
+          if (!visible(item)) continue;
           if (item.tier === tier) s.selected[item.id] = on;
         }
       }),
@@ -547,6 +840,7 @@ function createAppStore() {
         s.progress.reclaimedBytes = 0;
         s.progress.skipped = 0;
         s.progress.skippedItems = [];
+        s.reclaimedByDrive = {};
         s.phase = "cleaning";
       }),
     );
@@ -564,6 +858,9 @@ function createAppStore() {
             s.progress.deleted += 1;
             s.progress.reclaimedBytes += event.data.sizeBytes;
             s.progress.currentPath = event.data.path;
+            const mount = mountOfPath(event.data.path) ?? "other";
+            s.reclaimedByDrive[mount] =
+              (s.reclaimedByDrive[mount] ?? 0) + event.data.sizeBytes;
           }),
         );
         break;
@@ -609,6 +906,10 @@ function createAppStore() {
         s.selected = {};
         s.progress = emptyProgress();
         s.driveAfter = null;
+        s.drivesAfter = [];
+        s.driveFilter = null;
+        s.foundByDrive = {};
+        s.reclaimedByDrive = {};
       }),
     );
   }
@@ -764,6 +1065,12 @@ function createAppStore() {
     setRoots,
     addRoot,
     removeRoot,
+    hydrateDrives,
+    setDriveSelected,
+    setAllDrives,
+    addFolder,
+    removeFolder,
+    setDriveFilter,
     setTools,
     setDriveBefore,
     setDriveAfter,

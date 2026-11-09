@@ -137,9 +137,11 @@ impl From<&AutomationStatus> for TraySnapshot {
             "Watching disk usage".to_string()
         };
 
-        let tooltip = match status.disk_used_percent {
-            Some(pct) => format!("Safai — drive {pct:.0}% full\n{status_line}"),
-            None => format!("Safai\n{status_line}"),
+        let tooltip = match (&status.disk, status.disk_used_percent) {
+            (Some(disk), Some(pct)) => {
+                format!("Safai — {} {pct:.0}% full\n{status_line}", disk.mount)
+            }
+            _ => format!("Safai\n{status_line}"),
         };
 
         TraySnapshot {

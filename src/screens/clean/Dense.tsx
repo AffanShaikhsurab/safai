@@ -1,6 +1,7 @@
 import { type Component, For, Show } from "solid-js";
 import { appStore } from "../../state/store";
 import { formatBytes, relativeTime } from "../../lib/format";
+import { mountOfPath } from "../../lib/drives";
 import { useClean } from "./model";
 import { ProjectsDense } from "./Projects";
 
@@ -72,6 +73,7 @@ const CleanDense: Component<{ onRequestClean: () => void }> = (props) => {
                 </span>
               </th>
               <th>Path</th>
+              <th>Drive</th>
               <th>Category</th>
               <th>Tier</th>
               <th class="num">Modified</th>
@@ -115,6 +117,7 @@ const CleanDense: Component<{ onRequestClean: () => void }> = (props) => {
                     <td class="path" title={row.item.path}>
                       {row.item.path}
                     </td>
+                    <td class="mono">{mountOfPath(row.item.path) ?? "—"}</td>
                     <td>
                       <span
                         class="dense-swatch"

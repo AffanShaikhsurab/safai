@@ -91,7 +91,8 @@ pub struct ScheduleConfig {
     pub threshold_enabled: bool,
     /// Fire when *used* space reaches this percentage (e.g. 85 → at 85% full).
     pub threshold_percent: u8,
-    /// Which drive to watch, as a path. Empty = the drive holding the profile.
+    /// Pin the capacity trigger to one volume (a path on it). Empty = watch
+    /// every fixed drive and trigger when the worst one crosses the threshold.
     pub threshold_path: String,
 
     // -- Constraints (Task-Scheduler-style deferral) ----------------------

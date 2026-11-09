@@ -66,14 +66,20 @@ const App: Component = () => {
     appStore.setTheme(await loadTheme());
     appStore.setScanPrefs(await loadScanPrefs());
     appStore.setDevInactiveDays(await loadDevInactiveDays(), false);
+    // Automation: subscribe before hydrating the rest, so a run starting
+    // during startup can't slip through the gap between the two.
+    void appStore.initAutomationListeners();
+    // Enumerate drives before the first screen paints so Welcome and the
+    // shell header have the real volume list. On a first run with more than
+    // one drive, default to Quick: a Deep data-drive scan is the only new
+    // multi-minute cost, and it is one click away.
+    const firstMultiDriveRun = await appStore.hydrateDrives();
+    if (firstMultiDriveRun) appStore.setDeepScan(false);
     // Restore the last scan report so the Overview breakdown persists across
     // restarts (KPI stats are hydrated in Dashboard.onMount).
     void appStore.hydrateLastReport();
     // Ask for notification permission up front so completion pings work later.
     void ensureNotifyPermission();
-    // Automation: subscribe before hydrating, so a run starting during startup
-    // can't slip through the gap between the two.
-    void appStore.initAutomationListeners();
     void appStore.hydrateAutomation();
   });
 
