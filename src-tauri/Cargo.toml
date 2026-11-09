@@ -1,6 +1,6 @@
 [package]
 name = "safai"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 description = "Safai — Windows-first developer disk-cleanup app (Tauri v2 backend)"
@@ -19,13 +19,13 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-os = "2"
 tauri-plugin-store = "2"
-trash = "5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
 safai-core = { path = "../crates/safai-core" }
 safai-rules = { path = "../crates/safai-rules" }
+safai-engine = { path = "../crates/safai-engine" }
 tauri-plugin-notification = "2.3.3"
 # Automation: launch at logon + keep a single instance so the tray is unique.
 tauri-plugin-autostart = "2.5.1"
@@ -46,8 +46,8 @@ tokio = { version = "1.47", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-# Real directories for the deletion-guardrail tests: the allow-list check
-# canonicalizes paths, so it can only be tested against a real filesystem.
+# The shared engine owns the deletion-guardrail tests; the Tauri crate keeps a
+# couple of scan-scope planning tests that use real temp directories.
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]

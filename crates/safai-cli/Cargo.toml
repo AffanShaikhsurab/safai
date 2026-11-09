@@ -1,0 +1,20 @@
+[package]
+name = "safai-cli"
+version = "0.1.2"
+edition = "2021"
+license = "MIT"
+description = "Safai headless CLI for agent-driven scan and cleanup"
+default-run = "safai"
+
+[[bin]]
+name = "safai"
+path = "src/main.rs"
+
+[dependencies]
+safai-engine = { path = "../safai-engine" }
+safai-rules = { path = "../safai-rules" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+hex = "0.4"

@@ -2,11 +2,12 @@
 //!
 //! This layer is deliberately **thin**: all scanning/rules logic lives in
 //! `safai-rules` (which itself calls `safai-core`), the shared execution cores
-//! live in `engine`, and the automation policy lives in `schedule`. Here we only:
+//! live in `safai-engine`, and the automation policy lives in `schedule`. Here
+//! we only:
 //!   * adapt the engine's event sink to a Tauri `Channel`,
 //!   * hold the activity gate so interactive and scheduled work can't collide,
 //!   * move heavy work off the async runtime via `spawn_blocking`,
-//!   * and marshal results into the §3.4 DTOs.
+//!   * and marshal results into the DTOs.
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -17,10 +18,9 @@ use tauri::{AppHandle, State};
 use safai_rules::{CleanupItem, ScanEvent};
 
 use crate::dto::{
-    DeleteEvent, DeletePlan, DeletePlanItem, DeleteReport, DriveEntry, DriveInfo, RuleInfo,
-    SafetyTier, ToolInfo,
+    DeleteEvent, DeletePlan, DeleteReport, DriveEntry, DriveInfo, RuleInfo, ToolInfo,
 };
-use crate::engine::{self, deletion_allowed, drive_mount, normalize_slashes};
+use crate::engine::{self, drive_mount, normalize_slashes};
 use crate::error::{Result, SafaiError};
 use crate::schedule::{self, AutomationStatus, ScheduleConfig};
 use crate::state::SafaiState;
@@ -30,9 +30,10 @@ use crate::winsys;
 // scan
 // -------------------------------------------------------------------------
 
-/// Run the rules-based scan, streaming `ScanEvent`s through `on_event` and
-/// returning the aggregated `ScanReport`. The heavy walk runs on a blocking
-/// thread; progress is streamed live via the (cloneable) `Channel`.
+/// Run the rules-based scan over the selected drives/folders, streaming
+/// `ScanEvent`s through `on_event` and returning the aggregated `ScanReport`.
+/// The heavy walk runs on a blocking thread; progress is streamed live via the
+/// (cloneable) `Channel`.
 #[tauri::command]
 pub async fn scan(
     request: engine::ScanRequest,
@@ -92,60 +93,14 @@ pub fn cancel_scan(state: State<'_, SafaiState>) {
 // preview_delete
 // -------------------------------------------------------------------------
 
-/// Dry run: resolve ids server-side, re-check the allow-list, and report what
-/// would happen without touching the disk.
+/// Dry run: resolve ids server-side, re-check the guardrails (including
+/// dev-artifact revalidation), and report what would happen without touching
+/// the disk.
 #[tauri::command]
 pub async fn preview_delete(ids: Vec<String>, state: State<'_, SafaiState>) -> Result<DeletePlan> {
     let roots = state.allowed_roots.lock().unwrap().clone();
     let map = state.last_items.lock().unwrap();
-
-    let mut items: Vec<DeletePlanItem> = Vec::new();
-    let mut total_bytes: u64 = 0;
-    let mut blocked_count: u32 = 0;
-
-    for id in &ids {
-        match map.get(id) {
-            Some(item) => {
-                let allowed = deletion_allowed(item, &roots);
-                let reason = if allowed {
-                    None
-                } else {
-                    Some(engine::refusal_reason(item).to_string())
-                };
-                if allowed {
-                    total_bytes = total_bytes.saturating_add(item.size_bytes);
-                } else {
-                    blocked_count += 1;
-                }
-                items.push(DeletePlanItem {
-                    id: item.id.clone(),
-                    path: item.path.clone(),
-                    size_bytes: item.size_bytes,
-                    tier: item.tier,
-                    allowed,
-                    reason,
-                });
-            }
-            None => {
-                // Unknown id — never trust it; report it as blocked.
-                blocked_count += 1;
-                items.push(DeletePlanItem {
-                    id: id.clone(),
-                    path: String::new(),
-                    size_bytes: 0,
-                    tier: SafetyTier::Caution,
-                    allowed: false,
-                    reason: Some("item not found in last scan".to_string()),
-                });
-            }
-        }
-    }
-
-    Ok(DeletePlan {
-        items,
-        total_bytes,
-        blocked_count,
-    })
+    Ok(engine::preview_delete(&ids, &map, &roots))
 }
 
 // -------------------------------------------------------------------------
@@ -209,13 +164,13 @@ pub fn open_path(path: String, app: AppHandle) -> Result<()> {
 }
 
 // -------------------------------------------------------------------------
-// detect_tools / default_roots / cleanup_rules
+// list_drives / detect_tools / default_roots / cleanup_rules
 // -------------------------------------------------------------------------
 
 /// Every readable fixed drive, with label and free space.
 #[tauri::command]
 pub fn list_drives() -> Vec<DriveEntry> {
-    crate::winsys::drive_details()
+    winsys::drive_details()
         .into_iter()
         .map(DriveEntry::from)
         .collect()

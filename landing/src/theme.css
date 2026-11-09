@@ -1,0 +1,73 @@
+/* ===========================================================================
+   SAFAI LANDING — Nebula · Void
+   Tokens mirror the desktop app (src/theme.css). Same sky, two palettes.
+   =========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  --progress: #5b9df0;
+  --progress-2: #3a6dbf;
+  --progress-glow: rgba(91, 157, 240, 0.34);
+  --mint: #7fb2ff;
+  --mint-strong: #7fb2ff;
+  --mint-glow: rgba(127, 178, 255, 0.22);
+  --on-accent: #04061a;
+
+  --amber: #e0b155;
+  --rose: #e0798d;
+  --ok: #6ad39c;
+
+  --card: rgba(6, 11, 30, 0.56);
+  --card2: rgba(11, 19, 44, 0.72);
+  --border: rgba(120, 160, 232, 0.16);
+  --border-strong: rgba(120, 160, 232, 0.3);
+  --muted: rgba(214, 227, 255, 0.6);
+  --dim: rgba(178, 198, 240, 0.4);
+  --track: rgba(160, 190, 255, 0.12);
+
+  --glow-text: 0 0 24px rgba(127, 178, 255, 0.22);
+  --glow-mint: 0 0 20px rgba(127, 178, 255, 0.2);
+  --glass-blur: 4px;
+
+  --font-ui: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Silkscreen", monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --display-tracking: -0.5px;
+
+  --radius: 0px;
+  --page-bg: #04061a;
+  --seg-mask: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 8px);
+}
+
+/* Void — hue removed, not Nebula turned down. */
+html.theme-void {
+  --progress: #b4b4b8;
+  --progress-2: #7a7a7e;
+  --progress-glow: transparent;
+  --mint: #dcdcde;
+  --mint-strong: #dcdcde;
+  --mint-glow: transparent;
+  --on-accent: #0a0a0a;
+
+  --amber: #d2ad74;
+  --rose: #d1919c;
+  --ok: #8fc7a8;
+
+  --card: rgba(12, 12, 13, 0.62);
+  --card2: rgba(20, 20, 22, 0.8);
+  --border: rgba(255, 255, 255, 0.085);
+  --border-strong: rgba(255, 255, 255, 0.17);
+  --muted: rgba(255, 255, 255, 0.58);
+  --dim: rgba(255, 255, 255, 0.34);
+  --track: rgba(255, 255, 255, 0.09);
+
+  --glow-text: none;
+  --glow-mint: none;
+
+  --page-bg: #070708;
+}
+
+html.theme-void .sky-fallback {
+  background: linear-gradient(180deg, #070708 0%, #0d0d0f 42%, #191919 100%);
+}

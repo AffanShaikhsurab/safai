@@ -1,6 +1,6 @@
 {
   "name": "safai",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Safai — a Windows-first, developer-focused disk-cleanup desktop app.",
@@ -21,6 +21,10 @@
     "test:rust": "cargo test --workspace",
     "lint:rust": "cargo clippy --workspace --all-targets -- -D warnings",
     "fmt:check": "cargo fmt --all -- --check",
+    "cli": "cargo run -p safai-cli --",
+    "cli:build": "cargo build -p safai-cli --release",
+    "cli:pack": "cargo build -p safai-cli --release && npm --cwd npm/safai pack",
+    "cli:publish": "cargo build -p safai-cli --release && npm --cwd npm/safai publish --access public",
     "check": "npm run typecheck && npm run test && npm run build && npm run fmt:check && npm run lint:rust && npm run test:rust"
   },
   "dependencies": {

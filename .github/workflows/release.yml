@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  # Pushing a version tag is the normal release path. The tag is also the
+  # release name, so the workflow never has to guess a version.
+  push:
+    tags: ["v*"]
+  # Lets a maintainer publish a release from the Actions tab without a tag
+  # push, while still doing the actual build on GitHub's Windows runner.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.3.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `gh release create --generate-notes` needs the tag history.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The real build happens here, never on a contributor's machine.
+      - name: Build Tauri bundle
+        run: npm run tauri -- build
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $files = @(
+            Get-ChildItem target/release/bundle/nsis/*.exe -ErrorAction SilentlyContinue
+            Get-ChildItem target/release/bundle/msi/*.msi -ErrorAction SilentlyContinue
+          ) | ForEach-Object { $_.FullName }
+
+          if (-not $files -or $files.Count -eq 0) {
+            throw "No installer artifacts were produced."
+          }
+
+          Write-Host "Uploading to $env:TAG :"
+          $files | ForEach-Object { Write-Host "  $_" }
+
+          gh release view $env:TAG 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $files --clobber
+          } else {
+            gh release create $env:TAG `
+              --title "Safai $env:TAG" `
+              --generate-notes `
+              $files
+          }

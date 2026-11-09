@@ -1,0 +1,45 @@
+{
+  "name": "safai",
+  "version": "0.1.2",
+  "description": "Safai CLI - reclaim developer disk junk from your coding agent (Windows-first)",
+  "keywords": [
+    "safai",
+    "disk",
+    "cleanup",
+    "cli",
+    "developer",
+    "node_modules",
+    "cache"
+  ],
+  "license": "MIT",
+  "author": "Safai",
+  "homepage": "https://github.com/AffanShaikhsurab/safai#use-safai-with-your-coding-agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AffanShaikhsurab/safai.git",
+    "directory": "npm/safai"
+  },
+  "bugs": {
+    "url": "https://github.com/AffanShaikhsurab/safai/issues"
+  },
+  "type": "commonjs",
+  "bin": {
+    "safai": "bin/safai.js"
+  },
+  "files": [
+    "bin/**/*",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "scripts": {
+    "prepack": "node scripts/prepare-bin.mjs"
+  }
+}

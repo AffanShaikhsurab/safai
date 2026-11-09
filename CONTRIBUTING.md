@@ -34,6 +34,9 @@ npm run tauri dev
 | `src-tauri/src/schedule/` | Proactive automation: scheduling, triggers, autopilot policy |
 | `crates/safai-core/` | The fast filesystem scanner |
 | `crates/safai-rules/` | Cleanup detection engine (rules, categories, scan driver) |
+| `crates/safai-engine/` | Shared scan/delete execution (Tauri + CLI) |
+| `crates/safai-cli/` | Headless `safai` CLI for agents |
+| `.cursor/skills/safai/` · `.claude/skills/safai/` | Agent skills for the CLI workflow |
 
 The frontend talks to the backend through a small set of typed commands in
 `src/lib/tauri.ts`; the data shapes are mirrored in `src/lib/types.ts`. Keep the
@@ -65,7 +68,7 @@ CI will fail the same way. It runs, in order:
 | Frontend build | `npm run build` | Anything that breaks the production bundle |
 | Rust formatting | `npm run fmt:check` | Unformatted code (run `cargo fmt --all` to fix) |
 | Rust lints | `npm run lint:rust` | Clippy warnings — these are **errors** here |
-| Rust tests | `npm run test:rust` | Regressions across all three crates |
+| Rust tests | `npm run test:rust` | Regressions across the workspace |
 
 Individual pieces, when you want a faster loop:
 
@@ -73,8 +76,9 @@ Individual pieces, when you want a faster loop:
 npm run test:watch      # re-runs frontend tests on save
 cargo test -p safai     # just the Tauri app (scheduler, autopilot policy)
 cargo test -p safai-rules
+cargo test -p safai-engine
+cargo build -p safai-cli
 ```
-
 ### Writing tests
 
 The bench only helps if new logic lands with it. Two conventions make that
